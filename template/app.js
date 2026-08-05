@@ -1,0 +1,1330 @@
+/* ============================================================
+   BOC Eagles — Hitter Report (web port of HitterApp.R)
+   ============================================================ */
+
+const TEAM = "BOC_EAG";
+
+const PITCH_COLORS = {
+  "Sinker":"#de6a04","Slider":"#eee716","ChangeUp":"#1dbe3a","Changeup":"#1dbe3a",
+  "Fastball":"#d22d49","FourSeamFastBall":"#d22d49","TwoSeam":"#de6a04",
+  "Splitter":"#3bacac","Curveball":"#00d1ed","Knuckle Curve":"#6236cd",
+  "Cutter":"#933f2c","Slurve":"#93afd4","Sweeper":"#ddb33a","Screwball":"#32cd32",
+  "Forkball":"#aaf0d1","Slow Curve":"#4169e1","Knuckleball":"#a9a9a9","Other":"#999999"
+};
+const RESULT_COLORS = {
+  "Single":"#D8CCA6","Double":"#0D6EE2","Triple":"#FFDE00","HomeRun":"#8C2232",
+  "Out":"#999999","Error":"#cc2222"
+};
+const HARD_HIT_COLORS = {"95+":"#22c55e","75-95":"#eab308","0-74":"#ef4444"};
+
+/* Season list + date ranges are derived from the data itself (not hardcoded),
+   so new seasons that show up in future data files are picked up automatically.
+   Each row already carries a `Season` label computed by the build script.
+   NOTE: computed further below, once ALL_ROWS exists — see SEASON_DATE_RANGES. */
+function computeSeasonRanges(){
+  const map = new Map();
+  ALL_ROWS.forEach(r=>{
+    if (!r.Season || !r.Date) return;
+    if (!map.has(r.Season)) map.set(r.Season, [r.Date, r.Date]);
+    const cur = map.get(r.Season);
+    if (r.Date < cur[0]) cur[0] = r.Date;
+    if (r.Date > cur[1]) cur[1] = r.Date;
+  });
+  // Most recent season first
+  return new Map([...map.entries()].sort((a,b)=> b[1][1].localeCompare(a[1][1])));
+}
+
+/* ── Load embedded data ── */
+const RAW = JSON.parse(document.getElementById("data-blob").textContent);
+const COLS = RAW.cols;
+const COL_IDX = {};
+COLS.forEach((c,i)=>COL_IDX[c]=i);
+
+// Convert array-of-arrays into array-of-objects once
+const ALL_ROWS = RAW.rows.map(r=>{
+  const o = {};
+  for (let i=0;i<COLS.length;i++) o[COLS[i]] = r[i];
+  return o;
+});
+
+// Now that ALL_ROWS exists, derive the season list/date-ranges from it.
+const SEASON_DATE_RANGES = computeSeasonRanges();
+
+/* ============================================================
+   FILTER STATE
+   ============================================================ */
+const state = {
+  mode: null,        // 'hitting' | 'pitching'
+  season: "2026 SPRING",
+  dateStart: null,
+  dateEnd: null,
+  player: "All",
+  games: ["All"]
+};
+
+function inRange(dateStr, start, end){
+  if (!dateStr) return false;
+  return dateStr >= start && dateStr <= end;
+}
+
+// Players available for current season/date range, scoped to the active mode
+function filteredPlayers(){
+  const [s,e] = [state.dateStart, state.dateEnd];
+  const set = new Set();
+  if (state.mode === 'pitching'){
+    ALL_ROWS.forEach(r=>{
+      if (r.PitcherTeam===TEAM && inRange(r.Date,s,e)) set.add(r.Pitcher);
+    });
+  } else {
+    ALL_ROWS.forEach(r=>{
+      if (r.BatterTeam===TEAM && inRange(r.Date,s,e)) set.add(r.Batter);
+    });
+  }
+  return [...set].sort();
+}
+
+// Games available for current date range
+function filteredGames(){
+  const [s,e] = [state.dateStart, state.dateEnd];
+  const set = new Set();
+  ALL_ROWS.forEach(r=>{
+    if (inRange(r.Date,s,e) && r.Game) set.add(r.Game);
+  });
+  return [...set].sort().reverse();
+}
+
+// Core filtered dataset — mirrors R's fdata() / apply_filters(), mode-aware
+function fdata(){
+  const [s,e] = [state.dateStart, state.dateEnd];
+  const playerAll = state.player === "All";
+  const gamesAll = state.games.includes("All") || state.games.length===0;
+  const gameSet = gamesAll ? null : new Set(state.games);
+  const pitching = state.mode === 'pitching';
+
+  return ALL_ROWS.filter(r=>{
+    if (pitching){
+      if (playerAll){ if (r.PitcherTeam !== TEAM) return false; }
+      else { if (r.Pitcher !== state.player) return false; }
+    } else {
+      if (playerAll){ if (r.BatterTeam !== TEAM) return false; }
+      else { if (r.Batter !== state.player) return false; }
+    }
+    if (!inRange(r.Date, s, e)) return false;
+    if (gameSet && !gameSet.has(r.Game)) return false;
+    return true;
+  });
+}
+
+/* ============================================================
+   AGGREGATION HELPERS  (mirror R summarise_* functions)
+   ============================================================ */
+const sum = (arr,f)=>arr.reduce((a,r)=>a+(f(r)||0),0);
+const mean = (arr,f)=>{
+  const vals = arr.map(f).filter(v=>v!==null && v!==undefined && !Number.isNaN(v));
+  if (!vals.length) return NaN;
+  return vals.reduce((a,b)=>a+b,0)/vals.length;
+};
+const maxOf = (arr,f)=>{
+  const vals = arr.map(f).filter(v=>v!==null && v!==undefined && !Number.isNaN(v));
+  if (!vals.length) return NaN;
+  return Math.max(...vals);
+};
+const fmt3 = v => (v===null||v===undefined||Number.isNaN(v)) ? "-" : v.toFixed(3);
+const fmt0 = v => (v===null||v===undefined||Number.isNaN(v)) ? "-" : Math.round(v).toString();
+const fmt1 = v => (v===null||v===undefined||Number.isNaN(v)) ? "-" : v.toFixed(1);
+const pct1 = v => (v===null||v===undefined||Number.isNaN(v)) ? "-" : (v*100).toFixed(1)+"%";
+
+function traditionalStats(rows){
+  const PA = sum(rows,r=>r.PA), AB = sum(rows,r=>r.AB), H = sum(rows,r=>r.H);
+  const singles = sum(rows,r=>r.Single), doubles = sum(rows,r=>r.Double),
+        triples = sum(rows,r=>r.Triple), hr = sum(rows,r=>r.HR);
+  const TB = singles + doubles*2 + triples*3 + hr*4;
+  const SO = sum(rows,r=>r.SO), HBP = sum(rows,r=>r.HBP);
+  const BB = Math.max(sum(rows,r=>r.BB) - HBP, 0);
+  const AVG = AB? H/AB : NaN, OBP = PA? (H+BB+HBP)/PA : NaN, SLG = AB? TB/AB : NaN;
+  return {
+    Pitches: rows.length, PA, AB, H, "1B":singles, "2B":doubles, "3B":triples, HR:hr, TB,
+    SO, HBP, BB, AVG:fmt3(AVG), OBP:fmt3(OBP), SLG:fmt3(SLG), OPS:fmt3(OBP+SLG)
+  };
+}
+
+function advancedStats(rows){
+  const BIP = sum(rows,r=>r.InPlay), PA = sum(rows,r=>r.PA);
+  const inPlayRows = rows.filter(r=>r.InPlay);
+  const AB = sum(inPlayRows,r=>r.AB), H = sum(inPlayRows,r=>r.H);
+  const singles = sum(rows,r=>r.Single), doubles = sum(rows,r=>r.Double),
+        triples = sum(rows,r=>r.Triple), hr = sum(rows,r=>r.HR);
+  const TB = singles + doubles*2 + triples*3 + hr*4;
+  const HBP = sum(rows,r=>r.HBP);
+  const BB = Math.max(sum(rows,r=>r.BB) - HBP, 0);
+  const OBP = PA? (H+BB+HBP)/PA : NaN;
+  const SLG = AB? TB/AB : NaN;
+  const BABIP = AB? H/AB : NaN;
+  const abNoBunt = rows.filter(r=>r.AB===1 && !r.Bunt);
+  const xBA = mean(abNoBunt, r=>r.HitProb);
+  const xSLG = mean(abNoBunt, r=>r.Slug);
+  const wOBA = mean(rows, r=>r.wOBA);
+  const wOBAcon = mean(inPlayRows, r=>r.wOBA);
+  const xwSum = sum(rows, r=>r.xwOBA);
+  const xwOBA = PA? ((BB*0.69)+(HBP*0.69)+xwSum)/PA : NaN;
+  const ISO = AB? (doubles + 2*triples + 3*hr)/AB : NaN;
+  const wRAA = PA ? ((wOBA-0.378)/1.03)*PA : NaN;
+  const wRCplus = PA ? ((((wRAA/PA)+0.177)+(0.177-(0.945*0.177)))/0.177)*100 : NaN;
+  const OPSplus = 100*(((OBP/0.392)+(SLG/0.496)-1)/0.945);
+  return {
+    BIP, BABIP:fmt3(BABIP), xBA:fmt3(xBA), xSLG:fmt3(xSLG), wOBA:fmt3(wOBA),
+    wOBAcon:fmt3(wOBAcon), xwOBA:fmt3(xwOBA), ISO:fmt3(ISO),
+    "wRC+":fmt0(wRCplus), "OPS+":fmt0(OPSplus)
+  };
+}
+
+function evStats(rows){
+  const inPlay = rows.filter(r=>r.InPlay);
+  const swings = rows.filter(r=>r.Swing);
+  const zoneSwings = rows.filter(r=>r.Zone && r.Swing);
+  const outZone = rows.filter(r=>!r.Zone);
+  const AvgEV = mean(inPlay, r=>r.EV);
+  const MaxEV = maxOf(inPlay, r=>r.EV);
+  const MaxDist = maxOf(inPlay, r=>r.Dist);
+  return {
+    Pitches: rows.length,
+    BIP: sum(rows,r=>r.InPlay),
+    AvgEV: fmt1(AvgEV), MaxEV: fmt1(MaxEV),
+    "Hit95+%": pct1(mean(inPlay,r=>r.HardHit)),
+    "LA10-30%": pct1(mean(inPlay,r=>r.SweetSpot)),
+    "Barrel%": pct1(mean(inPlay,r=>r.Barrel)),
+    MaxDist: fmt1(MaxDist),
+    "Contact%": pct1(swings.length ? sum(swings,r=>r.InPlay)/swings.length : NaN),
+    "Z-Contact%": pct1(zoneSwings.length ? sum(zoneSwings,r=>r.InPlay)/zoneSwings.length : NaN),
+    "Chase%": pct1(outZone.length ? sum(outZone,r=>r.Swing)/outZone.length : NaN)
+  };
+}
+
+function groupBy(rows, keyFn){
+  const map = new Map();
+  rows.forEach(r=>{
+    const k = keyFn(r);
+    if (k===null || k===undefined) return;
+    if (!map.has(k)) map.set(k,[]);
+    map.get(k).push(r);
+  });
+  return map;
+}
+
+const PITCH_ORDER = ["Fastball","TwoSeam","Sinker","Cutter","Changeup","ChangeUp","Splitter","Slider","Curveball","Sweeper","Other"];
+function sortPitchKeys(keys){
+  return keys.slice().sort((a,b)=>{
+    const ia = PITCH_ORDER.indexOf(a), ib = PITCH_ORDER.indexOf(b);
+    return (ia<0?999:ia) - (ib<0?999:ib);
+  });
+}
+
+/* ============================================================
+   TABLE RENDERER  (mirrors R make_dt)
+   ============================================================ */
+function renderTable(container, rowObj, opts={}){
+  // rowObj: single object -> one-row table, OR array of objects -> multi-row table
+  const rows = Array.isArray(rowObj) ? rowObj : [rowObj];
+  if (!rows.length){ container.innerHTML = '<div class="empty-msg">No data</div>'; return; }
+  const cols = Object.keys(rows[0]);
+  const rateCols = new Set(opts.rateCols||[]);
+  const pctCols = new Set(opts.pctCols||[]);
+
+  let html = '<div class="table-scroll"><table class="stat-table"><thead><tr>';
+  cols.forEach(c=> html += `<th data-col="${c}">${c}</th>`);
+  html += '</tr></thead><tbody>';
+  rows.forEach(r=>{
+    html += '<tr>';
+    cols.forEach(c=>{
+      const cls = rateCols.has(c) ? 'rate-cell' : (pctCols.has(c) ? 'pct-cell' : '');
+      html += `<td class="${cls}">${r[c]===undefined||r[c]===null?'-':r[c]}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+
+  // simple click-to-sort
+  const table = container.querySelector('table');
+  table.querySelectorAll('th').forEach((th,idx)=>{
+    let asc = true;
+    th.addEventListener('click', ()=>{
+      const tbody = table.querySelector('tbody');
+      const trs = [...tbody.querySelectorAll('tr')];
+      trs.sort((a,b)=>{
+        const av = a.children[idx].textContent, bv = b.children[idx].textContent;
+        const an = parseFloat(av.replace('%','')), bn = parseFloat(bv.replace('%',''));
+        let cmp;
+        if (!Number.isNaN(an) && !Number.isNaN(bn)) cmp = an-bn;
+        else cmp = av.localeCompare(bv);
+        return asc ? cmp : -cmp;
+      });
+      asc = !asc;
+      trs.forEach(tr=>tbody.appendChild(tr));
+    });
+  });
+}
+
+/* ============================================================
+   ZONE GEOMETRY (feet) — shared by all strike-zone charts
+   ============================================================ */
+const SZ_BOX = { x:[-0.708,0.708,0.708,-0.708,-0.708], y:[1.755,1.755,3.378,3.378,1.755] };
+const HOME_PLATE_ICON = { x:[-0.708,-0.667,0,0.667,0.708,-0.708], y:[0,0.167,0.333,0.167,0,0] };
+
+function zoneShapes(){
+  return [
+    { type:'path', path:`M ${SZ_BOX.x.map((x,i)=>`${i===0?'':'L'}${x},${SZ_BOX.y[i]}`).join(' ')} Z`,
+      line:{color:'#444',width:1.5}, fillcolor:'rgba(0,0,0,0)' },
+    { type:'path', path:`M ${HOME_PLATE_ICON.x.map((x,i)=>`${i===0?'':'L'}${x},${HOME_PLATE_ICON.y[i]}`).join(' ')} Z`,
+      line:{color:'#000',width:1}, fillcolor:'#ede1d2' }
+  ];
+}
+
+/* Generic 2D strike-zone scatter, colored by a categorical field.
+   Mirrors sz_ggplot(). */
+function zoneScatter(div, rows, {colorField, colorMap, title, tooltipFn}){
+  const cats = [...new Set(rows.map(r=>r[colorField]).filter(v=>v!==null && v!==undefined))].sort();
+  const traces = cats.map(cat=>{
+    const sub = rows.filter(r=>r[colorField]===cat);
+    return {
+      type:'scatter', mode:'markers', name: cat,
+      x: sub.map(r=>r.PLS), y: sub.map(r=>r.PLH),
+      text: sub.map(tooltipFn),
+      hovertemplate: '%{text}<extra></extra>',
+      marker:{ color: (colorMap&&colorMap[cat])||'#888', size:8, opacity:0.85 }
+    };
+  });
+  const layout = {
+    title:{text:title, font:{size:12}},
+    xaxis:{title:'Horizontal Location', range:[-2,2], zeroline:false},
+    yaxis:{title:'Vertical Location', range:[0,5], zeroline:false, scaleanchor:'x'},
+    shapes: zoneShapes(),
+    legend:{orientation:'h', y:-0.18, font:{size:9}},
+    margin:{l:45,r:10,t:34,b:34}, height:300
+  };
+  Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
+}
+
+/* Density "heat map" for whiff/chase tabs — mirrors sz_density_plot()
+   using Plotly's histogram2dcontour as a stand-in for ggplot's stat_density_2d. */
+function zoneDensity(div, rows, title){
+  const x = rows.map(r=>r.PLS), y = rows.map(r=>r.PLH);
+  const traces = [{
+    type:'histogram2dcontour', x, y,
+    colorscale:[[0,'#ffffff'],[1,'#8C2232']],
+    showscale:false, contours:{coloring:'fill', showlines:false},
+    ncontours: 12
+  }];
+  const layout = {
+    title:{text:`${title} (n=${rows.length})`, font:{size:11}},
+    xaxis:{title:'', range:[-2,2], zeroline:false, showticklabels:false},
+    yaxis:{title:'', range:[0,4], zeroline:false, showticklabels:false, scaleanchor:'x'},
+    shapes: zoneShapes(),
+    margin:{l:8,r:8,t:28,b:8}, height:300, showlegend:false,
+    plot_bgcolor:'#fff'
+  };
+  Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
+}
+
+/* ============================================================
+   SPRAY CHART (3D, physics-based arcs) — port of R make_arc()
+   ============================================================ */
+const spraySt = { colorBy:'ev', hideDots:false };
+
+function makeArc(bearingDeg, distFt, laDeg, evMph, n=40){
+  const bear = bearingDeg*Math.PI/180, la = laDeg*Math.PI/180;
+  const evFps = evMph*1.46667, g = 32.174;
+  const tTotal = Math.max(2*evFps*Math.sin(la)/g, 0.01);
+  const x=[], y=[], z=[];
+  const gndSpd = evFps*Math.cos(la);
+  let gndArr = [];
+  for (let i=0;i<n;i++){
+    const t = tTotal*i/(n-1);
+    gndArr.push(gndSpd*t);
+  }
+  const maxGnd = Math.max(...gndArr) || 1;
+  const scale = distFt/maxGnd;
+  for (let i=0;i<n;i++){
+    const t = tTotal*i/(n-1);
+    const gnd = gndArr[i]*scale;
+    let h = evFps*Math.sin(la)*t - 0.5*g*t*t;
+    if (h<0) h=0;
+    x.push(-gnd*Math.sin(bear));
+    y.push(gnd*Math.cos(bear));
+    z.push(h);
+  }
+  return {x,y,z};
+}
+
+function fieldGeometryTraces(){
+  const foulDist = 340;
+  const thetaSeq = []; for(let i=0;i<120;i++) thetaSeq.push(-Math.PI/4 + (Math.PI/2)*i/119);
+  const wallR = th => 330 + 40*Math.cos(2*th);
+  const wallX = thetaSeq.map(th=>-wallR(th)*Math.sin(th));
+  const wallY = thetaSeq.map(th=> wallR(th)*Math.cos(th));
+
+  const diamX = [0, -90*Math.sin(Math.PI/4), 0, 90*Math.sin(Math.PI/4), 0];
+  const diamY = [0, 90*Math.cos(Math.PI/4), 90*Math.sqrt(2), 90*Math.cos(Math.PI/4), 0];
+
+  const dirtTh = []; for(let i=0;i<80;i++) dirtTh.push(2*Math.PI*i/79);
+  const cy2b = 90*Math.sqrt(2);
+  const dirtX = dirtTh.map(t=>95*Math.sin(t));
+  const dirtY = dirtTh.map(t=>cy2b+95*Math.cos(t));
+  const moundX = dirtTh.map(t=>8*Math.sin(t));
+  const moundY = dirtTh.map(t=>60.5+8*Math.cos(t));
+
+  const flX = [-foulDist*Math.sin(Math.PI/4), 0, foulDist*Math.sin(Math.PI/4)];
+  const flY = [ foulDist*Math.cos(Math.PI/4), 0, foulDist*Math.cos(Math.PI/4)];
+
+  const line3d = (x,y,color,width,dash)=>({
+    type:'scatter3d', mode:'lines', x, y, z:x.map(()=>0),
+    line:{color,width, ...(dash?{dash}:{})}, showlegend:false, hoverinfo:'skip'
+  });
+
+  return [
+    line3d(flX, flY, '#4a5a4a', 1.2, 'dot'),
+    line3d(wallX, wallY, '#5a6a5a', 2.0),
+    line3d(diamX, diamY, '#aaaaaa', 2.0),
+    line3d(dirtX, dirtY, '#8a6a3a', 1.0, 'dot'),
+    line3d(moundX, moundY, '#8a6a3a', 1.0)
+  ];
+}
+
+function spraySelectedRow(idx, validRows){
+  return (idx>=0 && idx<validRows.length) ? validRows[idx] : null;
+}
+
+function renderSprayChart(div, rows){
+  const valid = rows.filter(r=>
+    r.Dist!=null && r.Bearing!=null && r.InPlay &&
+    !['Undefined','Sacrifice','FieldersChoice'].includes(r.PlayResult) &&
+    r.Angle!=null && r.EV!=null && r.EV>0 && r.Dist>0
+  ).map(r=>{
+    const bearRad = r.Bearing*Math.PI/180;
+    return { ...r, sx:-Math.sin(bearRad)*r.Dist, sy:Math.cos(bearRad)*r.Dist };
+  });
+
+  const tip = r => `<b>${r.PlayResult}</b><br>EV: ${fmt1(r.EV)} mph  LA: ${fmt1(r.LA)}°<br>` +
+    `Dist: ${fmt0(r.Dist)} ft<br>Pitch: ${r.Pitch} ${fmt1(r.RelSpeed)} mph<br>` +
+    `Count: ${r.Balls}-${r.Strikes}  Date: ${r.Date}`;
+
+  let traces = fieldGeometryTraces();
+  const bipTotal = rows.filter(r=>r.InPlay).length;
+
+  if (!spraySt.hideDots){
+    if (spraySt.colorBy === 'ev'){
+      valid.forEach(r=>{
+        const evNorm = Math.max(0, Math.min(1,(r.EV-60)/(110-60)));
+        const arcCol = evNorm<0.25?'#0288d1':evNorm<0.5?'#00e676':evNorm<0.75?'#ffeb3b':'#e53935';
+        const arc = makeArc(r.Bearing, r.Dist, r.LA, r.EV);
+        traces.push({type:'scatter3d', mode:'lines', x:arc.x,y:arc.y,z:arc.z,
+          line:{color:arcCol,width:1.5}, opacity:0.55, showlegend:false, hoverinfo:'skip'});
+      });
+      traces.push({
+        type:'scatter3d', mode:'markers',
+        x:valid.map(r=>r.sx), y:valid.map(r=>r.sy), z:valid.map(()=>0),
+        text: valid.map(tip), hovertemplate:'%{text}<extra></extra>',
+        marker:{ size:6, opacity:0.9, color:valid.map(r=>r.EV),
+          colorscale:[[0,'#1a237e'],[0.25,'#0288d1'],[0.5,'#00e676'],[0.75,'#ffeb3b'],[1,'#b71c1c']],
+          cmin:60, cmax:110,
+          colorbar:{title:{text:'Exit Velo (mph)', font:{color:'#ccc',size:10}}, tickfont:{color:'#ccc',size:9},
+            bgcolor:'rgba(0,0,0,0)', thickness:12, len:0.45, x:1.01},
+          line:{width:0} },
+        showlegend:false, customdata: valid.map((r,i)=>i)
+      });
+    } else {
+      const field = spraySt.colorBy==='pitch' ? 'Pitch' : 'PlayResult';
+      const pal = spraySt.colorBy==='pitch' ? PITCH_COLORS : RESULT_COLORS;
+      const cats = [...new Set(valid.map(r=>r[field]))].sort();
+      cats.forEach(cat=>{
+        const sub = valid.filter(r=>r[field]===cat);
+        const col = pal[cat] || '#aaaaaa';
+        sub.forEach(r=>{
+          const arc = makeArc(r.Bearing, r.Dist, r.LA, r.EV);
+          traces.push({type:'scatter3d', mode:'lines', x:arc.x,y:arc.y,z:arc.z,
+            line:{color:col,width:1.5}, opacity:0.45, showlegend:false, hoverinfo:'skip'});
+        });
+        traces.push({
+          type:'scatter3d', mode:'markers', name:cat,
+          x:sub.map(r=>r.sx), y:sub.map(r=>r.sy), z:sub.map(()=>0),
+          text: sub.map(tip), hovertemplate:'%{text}<extra></extra>',
+          marker:{size:6, color:col, opacity:0.9, line:{width:0}}, showlegend:true
+        });
+      });
+    }
+  }
+
+  const layout = {
+    paper_bgcolor:'#0d1117',
+    scene:{
+      bgcolor:'#0d1117',
+      camera:{ eye:{x:-0.3,y:-1.8,z:0.7}, center:{x:0,y:0.3,z:-0.1}, up:{x:0,y:0,z:1} },
+      xaxis:{title:'', showgrid:false, zeroline:false, showticklabels:false, showbackground:false},
+      yaxis:{title:'', showgrid:false, zeroline:false, showticklabels:false, showbackground:false},
+      zaxis:{title:'Height (ft)', color:'#8a96a8', showgrid:true, gridcolor:'#1a2230',
+        zeroline:false, showbackground:false, tickfont:{size:9,color:'#8a96a8'}, range:[0,120]},
+      aspectmode:'manual', aspectratio:{x:1.4,y:1.6,z:0.45}
+    },
+    margin:{l:0,r:60,t:10,b:0}, font:{color:'#ccc'},
+    legend:{font:{color:'#ccc',size:11}, bgcolor:'rgba(13,17,23,0.85)', bordercolor:'#2a3a4a', borderwidth:1, x:0.01,y:0.99},
+    annotations:[{ text:`showing <b>${valid.length}</b> of <b>${bipTotal}</b> BIP`,
+      x:1,y:1,xref:'paper',yref:'paper',xanchor:'right',yanchor:'top',showarrow:false,
+      font:{color:'#7a9ab0',size:11} }],
+    height:600
+  };
+
+  Plotly.newPlot(div, traces, layout, {displayModeBar:true, displaylogo:false,
+    modeBarButtonsToRemove:['toImage','sendDataToCloud','autoScale2d','resetScale2d']});
+
+  const card = document.getElementById('spray_stat_card');
+  div.on('plotly_click', (ev)=>{
+    const pt = ev.points[0];
+    if (pt.data.customdata===undefined && !pt.data.name) return;
+    let row;
+    if (pt.data.customdata){ row = valid[pt.data.customdata[pt.pointIndex]]; }
+    else { // categorical trace: find by matching sx/sy
+      row = valid.find(r=>Math.abs(r.sx-pt.x)<0.01 && Math.abs(r.sy-pt.y)<0.01);
+    }
+    if (!row) return;
+    const col = RESULT_COLORS[row.PlayResult] || '#aaa';
+    card.innerHTML = `<div class="card-result" style="color:${col}">${(row.PlayResult||'').toUpperCase()}</div>
+      <div class="card-row"><span class="card-label">Exit Velo</span><span class="card-value">${fmt1(row.EV)} mph</span></div>
+      <div class="card-row"><span class="card-label">Launch</span><span class="card-value">${fmt1(row.LA)}°</span></div>
+      <div class="card-row"><span class="card-label">Distance</span><span class="card-value">${fmt0(row.Dist)} ft</span></div>
+      <div class="card-row"><span class="card-label">Pitch</span><span class="card-value">${fmt1(row.RelSpeed)} mph</span></div>
+      <div class="card-row"><span class="card-label">Movement</span><span class="card-value">${fmt1(row.IVB)}" IVB / ${fmt1(row.HB)}" HB</span></div>
+      <div class="card-row"><span class="card-label">Count</span><span class="card-value">${row.Balls}-${row.Strikes}</span></div>
+      <div class="card-row"><span class="card-label">Date</span><span class="card-value">${row.Date}</span></div>`;
+    card.style.display='block';
+  });
+  div.on('plotly_doubleclick', ()=>{ card.style.display='none'; });
+}
+
+/* ============================================================
+   3D CONTACT VIEWER (Hawk-Eye style) — port of R contact_plot_3d
+   ============================================================ */
+const contactSt = { camera:'catcher', metric:'ev' };
+
+function renderContactPlot(div, rows){
+  const tbl = rows.filter(r=>r.InPlay && r.CPX!=null && r.CPY!=null && r.CPZ!=null);
+  if (!tbl.length){
+    Plotly.newPlot(div, [], {paper_bgcolor:'#0d1117',
+      annotations:[{text:'No contact data available', x:0.5,y:0.5,xref:'paper',yref:'paper',
+        showarrow:false, font:{color:'#8a96a8', size:16}}], height:560}, {displayModeBar:false});
+    return;
+  }
+  const met = contactSt.metric;
+  let colorVal, clabel, cmin, cmax, colorscale;
+  if (met==='ev'){
+    colorVal = tbl.map(r=>r.EV); clabel='Exit Velo (mph)'; cmin=60; cmax=110;
+    colorscale=[[0,'#1a237e'],[0.25,'#0288d1'],[0.5,'#00e676'],[0.75,'#ffeb3b'],[1,'#b71c1c']];
+  } else if (met==='la'){
+    colorVal = tbl.map(r=>r.LA); clabel='Launch Angle (°)'; cmin=-20; cmax=50;
+    colorscale=[[0,'#b71c1c'],[0.25,'#ffeb3b'],[0.5,'#00e676'],[0.75,'#0288d1'],[1,'#1a237e']];
+  } else {
+    colorVal = tbl.map(r=>r.Barrel); clabel='Barrel'; cmin=0; cmax=1;
+    colorscale=[[0,'#1e2530'],[1,'#b71c1c']];
+  }
+
+  const pw = 8.5/12;
+  const plateH = [-pw,-pw*0.94,0,pw*0.94,pw,-pw];
+  const plateD = [0,2,4,2,0,0];
+  const plateZ = [0,0,0,0,0,0];
+  const szHw=0.708, szLo=1.5, szHi=3.4;
+  const szH=[-szHw,szHw,szHw,-szHw,-szHw], szZ=[szLo,szLo,szHi,szHi,szLo], szD=[0,0,0,0,0];
+  const refDepths=[0,12,24,36], refLabels=['plate front','1 ft out front','2 ft out front','3 ft out front'];
+  const hSpan=[-1.5,1.5];
+  const refFloor = Math.min(...tbl.map(r=>r.CPZ)) - 0.3;
+
+  const axisStyle = title => ({title, color:'#8a96a8', gridcolor:'#1e2530', zerolinecolor:'#2e3a4a',
+    showbackground:true, backgroundcolor:'#111820', tickfont:{color:'#8a96a8', size:9}});
+
+  let map, camera, xax, yax, zax, ar;
+  const cam = contactSt.camera;
+  if (cam==='catcher'){
+    map=(h,d,z)=>({x:h,y:d,z}); camera={eye:{x:0,y:-3.0,z:0.4},center:{x:0,y:0,z:0},up:{x:0,y:0,z:1}};
+    xax=axisStyle('Horizontal (ft)'); yax={...axisStyle('Depth from Plate (in)'), autorange:'reversed'};
+    zax=axisStyle('Height (ft)'); ar={x:1.2,y:1.6,z:1.0};
+  } else if (cam==='pitcher'){
+    map=(h,d,z)=>({x:-h,y:d,z}); camera={eye:{x:0,y:3.0,z:0.4},center:{x:0,y:0,z:0},up:{x:0,y:0,z:1}};
+    xax=axisStyle('Horizontal (ft)'); yax=axisStyle('Depth from Plate (in)');
+    zax=axisStyle('Height (ft)'); ar={x:1.2,y:1.6,z:1.0};
+  } else if (cam==='side'){
+    map=(h,d,z)=>({x:d,y:h,z}); camera={eye:{x:-3.0,y:0,z:0.3},center:{x:0,y:0,z:0},up:{x:0,y:0,z:1}};
+    xax=axisStyle('Depth from Plate (in)'); yax=axisStyle('Horizontal (ft)');
+    zax=axisStyle('Height (ft)'); ar={x:1.6,y:1.2,z:1.0};
+  } else {
+    map=(h,d,z)=>({x:h,y:d,z}); camera={eye:{x:0,y:-0.01,z:3.0},center:{x:0,y:0,z:0},up:{x:0,y:1,z:0}};
+    xax=axisStyle('Horizontal (ft)'); yax={...axisStyle('Depth from Plate (in)'), autorange:'reversed'};
+    zax=axisStyle('Height (ft)'); ar={x:1.2,y:1.6,z:0.5};
+  }
+
+  const mapArr = (hs,ds,zs)=>({ x:hs.map((h,i)=>map(h,ds[i],zs[i]).x),
+    y:hs.map((h,i)=>map(h,ds[i],zs[i]).y), z:hs.map((h,i)=>map(h,ds[i],zs[i]).z) });
+
+  const pts = mapArr(tbl.map(r=>r.CPX), tbl.map(r=>r.CPY), tbl.map(r=>r.CPZ));
+  const pl = mapArr(plateH, plateD, plateZ);
+  const szM = mapArr(szH, szD, szZ);
+
+  const refTraces = refDepths.map((d,i)=>{
+    const rl = mapArr(hSpan, [d,d], [refFloor,refFloor]);
+    return { type:'scatter3d', mode:'lines+text', x:rl.x, y:rl.y, z:rl.z,
+      line:{color:'rgba(80,160,255,0.30)', width:1, dash:'dash'},
+      text:['', refLabels[i]], textposition:'middle right', textfont:{color:'#607080', size:8},
+      showlegend:false, hoverinfo:'skip' };
+  });
+
+  const tip = tbl.map(r=>`EV: ${fmt1(r.EV)} mph<br>LA: ${fmt1(r.LA)}°<br>Dist: ${fmt0(r.Dist)} ft<br>Result: ${r.PlayResult}<br>Pitch: ${r.Pitch}`);
+
+  const traces = [
+    ...refTraces,
+    { type:'scatter3d', mode:'lines', x:pl.x, y:pl.y, z:pl.z, line:{color:'#fff',width:4}, showlegend:false, hoverinfo:'skip' },
+    { type:'scatter3d', mode:'lines', x:szM.x, y:szM.y, z:szM.z, line:{color:'rgba(220,220,220,0.7)',width:2}, showlegend:false, hoverinfo:'skip' },
+    { type:'scatter3d', mode:'markers', x:pts.x, y:pts.y, z:pts.z, text:tip, hovertemplate:'%{text}<extra></extra>',
+      marker:{ size:5, color:colorVal, colorscale, cmin, cmax, opacity:0.88,
+        colorbar:{title:{text:clabel, font:{color:'#b0b8c8', size:10}}, tickfont:{color:'#b0b8c8', size:9},
+          bgcolor:'rgba(0,0,0,0)', thickness:12, len:0.5, x:1.01}, line:{width:0} }, showlegend:false }
+  ];
+
+  Plotly.newPlot(div, traces, {
+    paper_bgcolor:'#111820',
+    scene:{ bgcolor:'#111820', camera, xaxis:xax, yaxis:yax, zaxis:zax, aspectmode:'manual', aspectratio:ar },
+    margin:{l:0,r:60,t:10,b:0}, font:{color:'#b0b8c8'}, height:560
+  }, {displayModeBar:false});
+}
+
+/* ============================================================
+   PITCHING STATS HELPERS (mirror app.R server logic)
+   ============================================================ */
+function pitchingSummary(rows){
+  const PC = rows.length;
+  const IPraw = (sum(rows,r=>r.OutsOnPlay) + sum(rows,r=>r.SO)) / 3;
+  const thirds = IPraw % 1;
+  const IP = Math.abs(thirds - 1/3) < 0.02 ? Math.floor(IPraw)+0.1
+           : Math.abs(thirds - 2/3) < 0.02 ? Math.floor(IPraw)+0.2 : IPraw;
+  const BF = sum(rows,r=>r.PA), H = sum(rows,r=>r.H);
+  const singles=sum(rows,r=>r.Single), doubles=sum(rows,r=>r.Double), triples=sum(rows,r=>r.Triple), hr=sum(rows,r=>r.HR);
+  const TB = singles + doubles*2 + triples*3 + hr*4;
+  const SO = sum(rows,r=>r.SO), HBP = sum(rows,r=>r.HBP);
+  const BB = Math.max(sum(rows,r=>r.BB) - HBP, 0);
+  const AB = sum(rows,r=>r.AB);
+  const WHIP = IP ? (BB+H)/IP : NaN;
+  const FIP = IP ? (((hr*13)+(3*(BB+HBP))-(2*SO))/IP + 3.76) : NaN;
+  const BAA = AB ? H/AB : NaN;
+  const SLG = AB ? TB/AB : NaN;
+  return { IP: fmt1(IP), PC, BF, H, BB, HBP, SO, BAA:fmt3(BAA), SLG:fmt3(SLG), WHIP:fmt2(WHIP), FIP:fmt2(FIP) };
+}
+
+function pitchingByPitchStats(rows){
+  const inPlay = rows.filter(r=>r.InPlay);
+  const swings = rows.filter(r=>r.Swing);
+  const zoneRows = rows.filter(r=>r.Zone);
+  const outZone = rows.filter(r=>!r.Zone);
+  const singles=sum(rows,r=>r.Single), doubles=sum(rows,r=>r.Double), triples=sum(rows,r=>r.Triple), hr=sum(rows,r=>r.HR);
+  const TB = singles + doubles*2 + triples*3 + hr*4;
+  const AB = sum(rows,r=>r.AB), H = sum(rows,r=>r.H);
+  return {
+    Pitches: rows.length,
+    "IZ %": pct1(mean(rows,r=>r.Zone)),
+    "Swing%": pct1(mean(rows,r=>r.Swing)),
+    "Z-Take%": pct1(zoneRows.length ? mean(zoneRows,r=>r.Take) : NaN),
+    "Whiff%": pct1(swings.length ? mean(swings,r=>r.Whiff) : NaN),
+    "Chase%": pct1(outZone.length ? mean(outZone,r=>r.Swing) : NaN),
+    "Contact%": pct1(mean(rows,r=>r.Contact)),
+    "Barrel%": pct1(inPlay.length ? mean(inPlay,r=>r.Barrel) : NaN),
+    AvgEV: fmt1(mean(inPlay,r=>r.EV)),
+    BAA: fmt3(AB? H/AB : NaN), SLG: fmt3(AB? TB/AB : NaN),
+    "GB%": pct1(inPlay.length ? mean(inPlay,r=>r.GB) : NaN),
+    "FB%": pct1(inPlay.length ? mean(inPlay,r=>r.FB_hit) : NaN),
+    "LD%": pct1(inPlay.length ? mean(inPlay,r=>r.LD) : NaN),
+  };
+}
+
+function pitchingMetricsRow(rows){
+  return {
+    Pitches: rows.length,
+    AvgVelo: fmt1(mean(rows,r=>r.RelSpeed)), MaxVelo: fmt1(maxOf(rows,r=>r.RelSpeed)),
+    IVB: fmt1(mean(rows,r=>r.IVB)), HB: fmt1(mean(rows,r=>r.HB)),
+    SpinRate: fmt0(mean(rows,r=>r.SpinRate)), SpinAxis: fmt0(mean(rows,r=>r.SpinAxis)),
+    RelHeight: fmt1(mean(rows,r=>r.RelHeight)), RelSide: fmt1(mean(rows,r=>Math.abs(r.RelSide))),
+    Extension: fmt1(mean(rows,r=>r.Extension)), VAA: fmt1(mean(rows,r=>r.VAA)),
+  };
+}
+
+const fmt2 = v => (v===null||v===undefined||Number.isNaN(v)) ? "-" : v.toFixed(2);
+
+/* Generic (non strike-zone) XY scatter with a crosshair through the origin —
+   used for Movement / Release / Extension charts. */
+function xyScatter(div, rows, {xField, yField, xRange, yRange, colorField, colorMap, title, xLabel, yLabel, tooltipFn}){
+  const cats = [...new Set(rows.map(r=>r[colorField]).filter(v=>v!=null))].sort();
+  const traces = cats.map(cat=>{
+    const sub = rows.filter(r=>r[colorField]===cat);
+    return {
+      type:'scatter', mode:'markers', name:cat,
+      x: sub.map(r=>r[xField]), y: sub.map(r=>r[yField]),
+      text: sub.map(tooltipFn), hovertemplate:'%{text}<extra></extra>',
+      marker:{ color:(colorMap&&colorMap[cat])||'#888', size:8, opacity:0.85 }
+    };
+  });
+  const layout = {
+    title:{text:title, font:{size:12}},
+    xaxis:{title:xLabel, range:xRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
+    yaxis:{title:yLabel, range:yRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
+    legend:{orientation:'h', y:-0.2, font:{size:9}},
+    margin:{l:50,r:10,t:34,b:44}, height:360
+  };
+  Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
+}
+
+/* Simple rolling-average trend line, standing in for R's loess smoother. */
+function rollingTrend(xs, ys, window=15){
+  const out = [];
+  for (let i=0;i<xs.length;i++){
+    const lo = Math.max(0,i-window), hi = Math.min(xs.length-1,i+window);
+    let s=0,n=0;
+    for (let j=lo;j<=hi;j++){ if (ys[j]!=null && !Number.isNaN(ys[j])){ s+=ys[j]; n++; } }
+    out.push(n? s/n : null);
+  }
+  return out;
+}
+
+
+const TABS_HITTING = [
+  {id:'traditional', label:'Traditional Stats'},
+  {id:'spray', label:'Spray Chart'},
+  {id:'advanced', label:'Advanced Stats'},
+  {id:'evstats', label:'Exit Velo Stats'},
+  {id:'evcharts', label:'Exit Velo Charts'},
+  {id:'izwhiff', label:'IZ Whiff'},
+  {id:'chase', label:'Chase'},
+  {id:'swingdec', label:'Swing Decisions'},
+  {id:'takes', label:'Takes'},
+  {id:'contact', label:'Contact'},
+  {id:'sequences', label:'Sequences'}
+];
+const TABS_PITCHING = [
+  {id:'results', label:'Results'},
+  {id:'resultsplit', label:'Results By Split'},
+  {id:'metrics', label:'Metrics'},
+  {id:'releaseext', label:'Release/Extension'},
+  {id:'strikecount', label:'Strike% By Count'},
+  {id:'locations', label:'Locations'},
+  {id:'heatmaps', label:'Heat Maps'},
+  {id:'izwhiffp', label:'IZ Whiff'},
+  {id:'chasep', label:'Chase'},
+  {id:'velotime', label:'Velo Over Time'},
+  {id:'striketime', label:'Strike% Over Time'}
+];
+function currentTabs(){ return state.mode === 'pitching' ? TABS_PITCHING : TABS_HITTING; }
+let activeTab = null;
+
+function buildTabPanelsSkeleton(){
+  const tabs = currentTabs();
+  if (!activeTab || !tabs.some(t=>t.id===activeTab)) activeTab = tabs[0].id;
+  const nav = document.getElementById('tabsNav');
+  nav.innerHTML = tabs.map(t=>`<button class="tab-btn${t.id===activeTab?' active':''}" data-tab="${t.id}">${t.label}</button>`).join('');
+  nav.querySelectorAll('.tab-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ activeTab = btn.dataset.tab; renderAll(); });
+  });
+
+  const content = document.getElementById('tabsContent');
+  content.innerHTML = tabs.map(t=>`<div class="tab-panel" id="panel-${t.id}"></div>`).join('');
+}
+
+function showActivePanel(){
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===activeTab));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active', p.id===`panel-${activeTab}`));
+}
+
+/* ── Tab 1: Traditional Stats ── */
+function renderTraditional(rows){
+  const panel = document.getElementById('panel-traditional');
+  panel.innerHTML = `
+    <div class="section-label">Overall</div>
+    <div id="trad-overall"></div>
+    <div class="section-label">By Pitcher Hand</div>
+    <div id="trad-split"></div>`;
+  renderTable(document.getElementById('trad-overall'), traditionalStats(rows), {rateCols:['AVG','OBP','SLG','OPS']});
+  const bySide = groupBy(rows, r=>r.PitcherThrows);
+  const splitRows = [...bySide.keys()].sort().map(side=>({Side:side, ...traditionalStats(bySide.get(side))}));
+  renderTable(document.getElementById('trad-split'), splitRows, {rateCols:['AVG','OBP','SLG','OPS']});
+}
+
+/* ── Tab 2: Spray Chart ── */
+function renderSprayTab(rows){
+  const panel = document.getElementById('panel-spray');
+  panel.innerHTML = `
+    <div id="spray-toolbar">
+      <button class="spray-btn" data-col="ev">EV</button>
+      <button class="spray-btn" data-col="pitch">Pitch</button>
+      <button class="spray-btn" data-col="result">Result</button>
+      <div class="spray-btn-divider"></div>
+      <button class="spray-btn" id="spray_hide_dots">Hide Dots</button>
+      <div class="spray-btn-divider"></div>
+      <div id="spray_ev_bar"><span>EV</span><span>65</span><div id="spray_ev_gradient"></div><span>106 mph</span></div>
+    </div>
+    <div style="position:relative;">
+      <div id="spray_stat_card"><div class="card-result"></div></div>
+      <div id="spray_chart_full" style="height:620px;"></div>
+    </div>`;
+
+  function syncButtons(){
+    panel.querySelectorAll('.spray-btn[data-col]').forEach(b=>b.classList.toggle('active', b.dataset.col===spraySt.colorBy));
+    const hideBtn = document.getElementById('spray_hide_dots');
+    hideBtn.classList.toggle('active', spraySt.hideDots);
+    hideBtn.textContent = spraySt.hideDots ? 'Show Dots' : 'Hide Dots';
+    document.getElementById('spray_ev_bar').style.display = spraySt.colorBy==='ev' ? 'flex' : 'none';
+  }
+  panel.querySelectorAll('.spray-btn[data-col]').forEach(b=>{
+    b.addEventListener('click', ()=>{ spraySt.colorBy=b.dataset.col; syncButtons(); renderSprayChart(document.getElementById('spray_chart_full'), fdata()); });
+  });
+  document.getElementById('spray_hide_dots').addEventListener('click', ()=>{
+    spraySt.hideDots = !spraySt.hideDots; syncButtons(); renderSprayChart(document.getElementById('spray_chart_full'), fdata());
+  });
+  syncButtons();
+  renderSprayChart(document.getElementById('spray_chart_full'), rows);
+}
+
+/* ── Tab 3: Advanced Stats ── */
+function renderAdvanced(rows){
+  const panel = document.getElementById('panel-advanced');
+  panel.innerHTML = `
+    <div class="section-label">Overall</div><div id="adv-overall"></div>
+    <div class="section-label">By Pitcher Hand</div><div id="adv-side"></div>
+    <div class="section-label">By Pitch Type</div><div id="adv-pitch"></div>`;
+  const rateCols = ['BABIP','xBA','xSLG','wOBA','wOBAcon','xwOBA','ISO'];
+  renderTable(document.getElementById('adv-overall'), advancedStats(rows), {rateCols});
+
+  const bySide = groupBy(rows, r=>r.PitcherThrows);
+  renderTable(document.getElementById('adv-side'),
+    [...bySide.keys()].sort().map(side=>({Side:side, ...advancedStats(bySide.get(side))})), {rateCols});
+
+  const byPitch = groupBy(rows, r=>r.Pitch);
+  renderTable(document.getElementById('adv-pitch'),
+    sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...advancedStats(byPitch.get(p))})), {rateCols});
+}
+
+/* ── Tab 4: Exit Velo Stats ── */
+function renderEvStats(rows){
+  const panel = document.getElementById('panel-evstats');
+  panel.innerHTML = `
+    <div class="section-label">Overall</div><div id="ev-overall"></div>
+    <div class="section-label">By Pitcher Hand</div><div id="ev-side"></div>
+    <div class="section-label">By Pitch Type</div><div id="ev-pitch"></div>`;
+  const pctCols = ['Hit95+%','LA10-30%','Barrel%','Contact%','Z-Contact%','Chase%'];
+  renderTable(document.getElementById('ev-overall'), evStats(rows), {pctCols});
+
+  const bySide = groupBy(rows, r=>r.PitcherThrows);
+  renderTable(document.getElementById('ev-side'),
+    [...bySide.keys()].sort().map(side=>({Side:side, ...evStats(bySide.get(side))})), {pctCols});
+
+  const byPitch = groupBy(rows, r=>r.Pitch);
+  renderTable(document.getElementById('ev-pitch'),
+    sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...evStats(byPitch.get(p))})), {pctCols});
+}
+
+/* ── Tab 5: Exit Velo Charts ── */
+function renderEvCharts(rows){
+  const panel = document.getElementById('panel-evcharts');
+  panel.innerHTML = `
+    <div class="section-label">vs RHP</div>
+    <div class="grid grid-3">
+      <div class="chart-box"><div id="ev_rhp"></div></div>
+      <div class="chart-box"><div id="ev_rhp_fb"></div></div>
+      <div class="chart-box"><div id="ev_rhp_bb"></div></div>
+    </div>
+    <div class="section-label chart-row">vs LHP</div>
+    <div class="grid grid-3">
+      <div class="chart-box"><div id="ev_lhp"></div></div>
+      <div class="chart-box"><div id="ev_lhp_fb"></div></div>
+      <div class="chart-box"><div id="ev_lhp_bb"></div></div>
+    </div>`;
+  const tip = r => `Pitch: ${r.Pitch}<br>EV: ${r.EV}<br>Result: ${r.PlayResult}`;
+  const evPlot = (id, filterFn, title) => zoneScatter(document.getElementById(id),
+    rows.filter(r=>r.InPlay && filterFn(r)), {colorField:'ExitSpeedCategory', colorMap:HARD_HIT_COLORS, title, tooltipFn:tip});
+
+  evPlot('ev_rhp',    r=>r.PitcherThrows==='Right', 'Exit Velo vs RHP');
+  evPlot('ev_rhp_fb', r=>r.PitcherThrows==='Right' && r.FBc, 'Exit Velo vs RHP — FB');
+  evPlot('ev_rhp_bb', r=>r.PitcherThrows==='Right' && !r.FBc, 'Exit Velo vs RHP — OS/BB');
+  evPlot('ev_lhp',    r=>r.PitcherThrows==='Left', 'Exit Velo vs LHP');
+  evPlot('ev_lhp_fb', r=>r.PitcherThrows==='Left' && r.FBc, 'Exit Velo vs LHP — FB');
+  evPlot('ev_lhp_bb', r=>r.PitcherThrows==='Left' && r.OffSpeed, 'Exit Velo vs LHP — OS/BB');
+}
+
+/* ── Tab 6: IZ Whiff / Tab 7: Chase ── */
+function renderHeatGrid(panelId, rows, kind){
+  const panel = document.getElementById(panelId);
+  panel.innerHTML = `
+    <div class="section-label">vs RHP</div>
+    <div class="grid grid-4">
+      <div class="chart-box"><div id="${kind}_rhp"></div></div>
+      <div class="chart-box"><div id="${kind}_rhp_fb"></div></div>
+      <div class="chart-box"><div id="${kind}_rhp_os"></div></div>
+      <div class="chart-box"><div id="${kind}_rhp_bb"></div></div>
+    </div>
+    <div class="section-label chart-row">vs LHP</div>
+    <div class="grid grid-4">
+      <div class="chart-box"><div id="${kind}_lhp"></div></div>
+      <div class="chart-box"><div id="${kind}_lhp_fb"></div></div>
+      <div class="chart-box"><div id="${kind}_lhp_os"></div></div>
+      <div class="chart-box"><div id="${kind}_lhp_bb"></div></div>
+    </div>`;
+  const base = kind==='whiff'
+    ? r => r.PitchCall==='StrikeSwinging' && r.Zone
+    : r => r.PitchCall==='StrikeSwinging' && !r.Zone;
+  const label = kind==='whiff' ? 'Whiff' : 'Chase';
+  const draw = (id, filterFn, title) => zoneDensity(document.getElementById(id), rows.filter(r=>base(r) && filterFn(r)), title);
+
+  draw(`${kind}_rhp`,    r=>r.PitcherThrows==='Right', `${label} vs RHP`);
+  draw(`${kind}_rhp_fb`, r=>r.PitcherThrows==='Right' && r.FBc, `${label} vs RHP FB`);
+  draw(`${kind}_rhp_os`, r=>r.PitcherThrows==='Right' && r.OSc, `${label} vs RHP OS`);
+  draw(`${kind}_rhp_bb`, r=>r.PitcherThrows==='Right' && r.BBc, `${label} vs RHP BB`);
+  draw(`${kind}_lhp`,    r=>r.PitcherThrows==='Left', `${label} vs LHP`);
+  draw(`${kind}_lhp_fb`, r=>r.PitcherThrows==='Left' && r.FBc, `${label} vs LHP FB`);
+  draw(`${kind}_lhp_os`, r=>r.PitcherThrows==='Left' && r.OSc, `${label} vs LHP OS`);
+  draw(`${kind}_lhp_bb`, r=>r.PitcherThrows==='Left' && r.BBc, `${label} vs LHP BB`);
+}
+
+/* ── Tab 8: Swing Decisions / Tab 9: Takes ── */
+function renderDecisionGrid(panelId, rows, mode){
+  const panel = document.getElementById(panelId);
+  const prefix = mode==='swing' ? 'sd' : 'takes';
+  panel.innerHTML = `
+    <div class="grid grid-3">
+      <div class="chart-box"><div id="${prefix}_total"></div></div>
+      <div class="chart-box"><div id="${prefix}_rhp"></div></div>
+      <div class="chart-box"><div id="${prefix}_lhp"></div></div>
+    </div>
+    <div class="grid grid-3 chart-row">
+      <div class="chart-box"><div id="${prefix}_fastball"></div></div>
+      <div class="chart-box"><div id="${prefix}_offspeed"></div></div>
+      <div class="chart-box"><div id="${prefix}_bb"></div></div>
+    </div>`;
+  const baseRows = mode==='swing' ? rows.filter(r=>r.Swing) : rows.filter(r=>r.Take);
+  const tip = mode==='swing'
+    ? r => `Call: ${r.PitchCall}<br>Result: ${r.PlayResult}<br>EV: ${r.EV}`
+    : r => `Count: ${r.Balls}-${r.Strikes}<br>Call: ${r.PitchCall}`;
+  const titlePrefix = mode==='swing' ? 'SD' : 'Takes';
+  const draw = (id, filterFn, title) => zoneScatter(document.getElementById(id),
+    baseRows.filter(filterFn), {colorField:'Pitch', colorMap:PITCH_COLORS, title, tooltipFn:tip});
+
+  draw(`${prefix}_total`,    ()=>true, mode==='swing' ? 'Swing Decisions' : 'Takes — All');
+  draw(`${prefix}_rhp`,      r=>r.PitcherThrows==='Right', `${titlePrefix} vs RHP`);
+  draw(`${prefix}_lhp`,      r=>r.PitcherThrows==='Left', `${titlePrefix} vs LHP`);
+  draw(`${prefix}_fastball`, r=>r.FBc, `${titlePrefix} vs FB`);
+  draw(`${prefix}_offspeed`, r=>r.OSc, `${titlePrefix} vs OS`);
+  draw(`${prefix}_bb`,       r=>r.BBc, `${titlePrefix} vs BB`);
+}
+
+/* ── Tab 10: Contact (3D viewer) ── */
+function renderContactTab(rows){
+  const panel = document.getElementById('panel-contact');
+  panel.innerHTML = `
+    <div id="contact-panel">
+      <div class="contact-btn-row">
+        <button class="contact-btn" data-cam="catcher">Catcher</button>
+        <button class="contact-btn" data-cam="pitcher">Pitcher</button>
+        <button class="contact-btn" data-cam="side">Side</button>
+        <button class="contact-btn" data-cam="overhead">Overhead</button>
+        <div class="contact-btn-divider"></div>
+        <button class="contact-btn" data-met="ev">Exit Velo</button>
+        <button class="contact-btn" data-met="la">Launch Angle</button>
+        <button class="contact-btn" data-met="barrel">Barrel%</button>
+      </div>
+      <div id="contact_subtitle"></div>
+      <div id="contact_n_label"></div>
+      <div id="contact_plot_3d" style="height:560px;"></div>
+    </div>`;
+  const subtitleFor = met => met==='ev' ? 'Barrel rate (98+ EV, 10-35°) by contact point'
+    : met==='la' ? 'Launch angle by contact point' : 'Barrel (98+ EV, 10-35°) by contact point';
+
+  function sync(){
+    panel.querySelectorAll('[data-cam]').forEach(b=>b.classList.toggle('active', b.dataset.cam===contactSt.camera));
+    panel.querySelectorAll('[data-met]').forEach(b=>b.classList.toggle('active', b.dataset.met===contactSt.metric));
+    document.getElementById('contact_subtitle').textContent = subtitleFor(contactSt.metric);
+    const n = rows.filter(r=>r.InPlay && r.CPX!=null && r.CPY!=null && r.CPZ!=null).length;
+    document.getElementById('contact_n_label').textContent = `n=${n} tracked contacts`;
+  }
+  panel.querySelectorAll('[data-cam]').forEach(b=>b.addEventListener('click', ()=>{
+    contactSt.camera=b.dataset.cam; sync(); renderContactPlot(document.getElementById('contact_plot_3d'), fdata());
+  }));
+  panel.querySelectorAll('[data-met]').forEach(b=>b.addEventListener('click', ()=>{
+    contactSt.metric=b.dataset.met; sync(); renderContactPlot(document.getElementById('contact_plot_3d'), fdata());
+  }));
+  sync();
+  renderContactPlot(document.getElementById('contact_plot_3d'), rows);
+}
+
+/* ── Tab 11: Sequences ── */
+function renderSequences(rows){
+  const panel = document.getElementById('panel-sequences');
+  panel.innerHTML = `
+    <div class="section-label">Pitch Log</div><div id="seq-table"></div>
+    <div class="section-label chart-row">Strike Zone</div><div id="seq-zone" style="height:420px;"></div>`;
+
+  const sorted = rows.slice().sort((a,b)=> (a.Date||'').localeCompare(b.Date));
+  const logRows = sorted.map(r=>({
+    PitchofPA:r.PitchofPA, Pitcher:r.Pitcher, Pitch:r.Pitch,
+    PitchCall: ['FoulBallNotFieldable','FoulBallFieldable'].includes(r.PitchCall) ? 'FoulBall' : r.PitchCall,
+    Balls:r.Balls, Strikes:r.Strikes, PlayResult:r.PlayResult,
+    RelSpeed:fmt1(r.RelSpeed), IVB:fmt1(r.IVB), HB:fmt1(r.HB),
+    EV: r.EV==null?'-':fmt1(r.EV), Angle: r.LA==null?'-':fmt1(r.LA), Distance: r.Dist==null?'-':fmt1(r.Dist)
+  }));
+  renderTable(document.getElementById('seq-table'), logRows.slice(0,300));
+
+  const tip = (r,i) => `#${i+1} ${r.Pitch}<br>Call: ${r.PitchCall}<br>Result: ${r.PlayResult}<br>EV: ${r.EV??'-'}`;
+  const div = document.getElementById('seq-zone');
+  const cats = [...new Set(sorted.map(r=>r.Pitch))].sort();
+  const traces = cats.map(cat=>{
+    const idxs = sorted.map((r,i)=>({r,i})).filter(o=>o.r.Pitch===cat);
+    return {
+      type:'scatter', mode:'markers+text', name:cat,
+      x: idxs.map(o=>o.r.PLS), y: idxs.map(o=>o.r.PLH),
+      text: idxs.map(o=>String(o.i+1)), textfont:{size:9,color:'#000'},
+      hovertext: idxs.map(o=>tip(o.r,o.i)), hovertemplate:'%{hovertext}<extra></extra>',
+      marker:{ color:PITCH_COLORS[cat]||'#888', size:14, opacity:0.85, line:{width:1.5,color:'#000'} }
+    };
+  });
+  Plotly.newPlot(div, traces, {
+    title:{text:`Strike Zone — ${state.player}`, font:{size:13}},
+    xaxis:{title:'Horizontal Location', range:[-2,2], zeroline:false},
+    yaxis:{title:'Vertical Location', range:[0,5], zeroline:false, scaleanchor:'x'},
+    shapes: zoneShapes(), legend:{orientation:'h', y:-0.15},
+    margin:{l:45,r:10,t:40,b:40}
+  }, {displayModeBar:false, responsive:true});
+}
+
+/* ============================================================
+   SIDEBAR WIRING
+   ============================================================ */
+/* ── Pitching Tab 1: Results ── */
+function renderPitchingResults(rows){
+  const panel = document.getElementById('panel-results');
+  panel.innerHTML = `
+    <div class="section-label">Summary</div><div id="pr-summary"></div>
+    <div class="section-label chart-row">By Pitch</div><div id="pr-bypitch"></div>`;
+  renderTable(document.getElementById('pr-summary'), pitchingSummary(rows), {rateCols:['BAA','SLG','WHIP','FIP']});
+  const byPitch = groupBy(rows, r=>r.Pitch);
+  renderTable(document.getElementById('pr-bypitch'),
+    sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...pitchingByPitchStats(byPitch.get(p))})),
+    {pctCols:['IZ %','Swing%','Z-Take%','Whiff%','Chase%','Contact%','Barrel%','GB%','FB%','LD%']});
+}
+
+/* ── Pitching Tab 2: Results By Split (Pitch x BatterSide) ── */
+function renderPitchingResultsSplit(rows){
+  const panel = document.getElementById('panel-resultsplit');
+  panel.innerHTML = `<div class="section-label">By Pitch &amp; Batter Side</div><div id="pr-split"></div>`;
+  const grouped = new Map();
+  rows.forEach(r=>{
+    const key = `${r.Pitch}||${r.BatterSide}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(r);
+  });
+  const keys = [...grouped.keys()].sort((a,b)=>{
+    const [pa,sa]=a.split('||'), [pb,sb]=b.split('||');
+    const ia=PITCH_ORDER.indexOf(pa), ib=PITCH_ORDER.indexOf(pb);
+    return (ia<0?999:ia)-(ib<0?999:ib) || sa.localeCompare(sb);
+  });
+  renderTable(document.getElementById('pr-split'),
+    keys.map(k=>{ const [Pitch,Side]=k.split('||'); return {Side, Pitch, ...pitchingByPitchStats(grouped.get(k))}; }),
+    {pctCols:['IZ %','Swing%','Z-Take%','Whiff%','Chase%','Contact%','Barrel%','GB%','FB%','LD%']});
+}
+
+/* ── Pitching Tab 3: Metrics ── */
+function renderPitchingMetrics(rows){
+  const panel = document.getElementById('panel-metrics');
+  panel.innerHTML = `
+    <div class="section-label">By Pitch</div><div id="pm-table"></div>
+    <div class="section-label chart-row">Movement</div>
+    <div class="chart-box" style="max-width:640px;"><div id="pm-movement"></div></div>`;
+  const byPitch = groupBy(rows, r=>r.Pitch);
+  const total = rows.length || 1;
+  renderTable(document.getElementById('pm-table'),
+    sortPitchKeys([...byPitch.keys()]).map(p=>{
+      const sub = byPitch.get(p);
+      return { Pitch:p, ...pitchingMetricsRow(sub), Usage: pct1(sub.length/total) };
+    }).map(({Pitch,Pitches,Usage,AvgVelo,MaxVelo,IVB,HB,SpinRate,SpinAxis,RelHeight,RelSide,Extension,VAA})=>
+      ({Pitch,Pitches,Usage,AvgVelo,MaxVelo,IVB,HB,SpinRate,SpinAxis,RelHeight,RelSide,Extension,VAA})),
+    {pctCols:['Usage']});
+
+  const tip = r => `Pitch: ${r.Pitch}<br>HB: ${fmt1(r.HB)}  IVB: ${fmt1(r.IVB)}`;
+  xyScatter(document.getElementById('pm-movement'), rows, {
+    xField:'HB', yField:'IVB', xRange:[-30,30], yRange:[-30,30],
+    colorField:'Pitch', colorMap:PITCH_COLORS, title:'Pitch Movement',
+    xLabel:'Horizontal Movement (HB)', yLabel:'Vertical Movement (IVB)', tooltipFn:tip
+  });
+}
+
+/* ── Pitching Tab 4: Release / Extension ── */
+function renderReleaseExtension(rows){
+  const panel = document.getElementById('panel-releaseext');
+  panel.innerHTML = `
+    <div class="grid grid-3">
+      <div class="chart-box"><div id="re-release"></div></div>
+      <div class="chart-box"><div id="re-extension"></div></div>
+    </div>`;
+  const tipR = r => `Pitch: ${r.Pitch}<br>RelSide: ${fmt1(r.RelSide)}  RelHeight: ${fmt1(r.RelHeight)}`;
+  xyScatter(document.getElementById('re-release'), rows, {
+    xField:'RelSide', yField:'RelHeight', xRange:[-4,4], yRange:[2,7],
+    colorField:'Pitch', colorMap:PITCH_COLORS, title:'Release — Pitcher\u2019s Perspective',
+    xLabel:'Horizontal Release Point', yLabel:'Vertical Release Point', tooltipFn:tipR
+  });
+  const tipE = r => `Pitch: ${r.Pitch}<br>Extension: ${fmt1(r.Extension)}  RelHeight: ${fmt1(r.RelHeight)}`;
+  xyScatter(document.getElementById('re-extension'), rows, {
+    xField:'Extension', yField:'RelHeight', xRange:[0,8], yRange:[0,8],
+    colorField:'Pitch', colorMap:PITCH_COLORS, title:'Extension',
+    xLabel:'Extension (ft)', yLabel:'Vertical Release Point', tooltipFn:tipE
+  });
+}
+
+/* ── Pitching Tab 5: Strike% By Count ── */
+const COUNT_FIELDS = [
+  ['0-0','FP'],['0-1','Cnt01'],['1-0','Cnt10'],['1-1','Cnt11'],['0-2','Cnt02'],['1-2','Cnt12'],
+  ['2-2','Cnt22'],['2-0','Cnt20'],['2-1','Cnt21'],['3-0','Cnt30'],['3-1','Cnt31'],['3-2','CntFull']
+];
+function strikeByCountRow(rows){
+  const row = {};
+  COUNT_FIELDS.forEach(([label,field])=>{
+    const sub = rows.filter(r=>r[field]);
+    row[label] = pct1(sub.length ? mean(sub,r=>r.Strike) : NaN);
+  });
+  return row;
+}
+function renderStrikeByCount(rows){
+  const panel = document.getElementById('panel-strikecount');
+  panel.innerHTML = `
+    <div class="section-label">Overall</div><div id="sc-total"></div>
+    <div class="section-label chart-row">By Pitch</div><div id="sc-bypitch"></div>`;
+  renderTable(document.getElementById('sc-total'), strikeByCountRow(rows), {pctCols:COUNT_FIELDS.map(c=>c[0])});
+  const byPitch = groupBy(rows, r=>r.Pitch);
+  renderTable(document.getElementById('sc-bypitch'),
+    sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...strikeByCountRow(byPitch.get(p))})),
+    {pctCols:COUNT_FIELDS.map(c=>c[0])});
+}
+
+/* ── Pitching Tab 6: Locations ── */
+function renderPitchLocations(rows){
+  const panel = document.getElementById('panel-locations');
+  panel.innerHTML = `
+    <div class="grid grid-4">
+      <div class="chart-box"><div id="loc-all"></div></div>
+      <div class="chart-box"><div id="loc-lhb"></div></div>
+      <div class="chart-box"><div id="loc-rhb"></div></div>
+      <div class="chart-box"><div id="loc-inplay"></div></div>
+    </div>`;
+  const tip = r => `RelSpeed: ${fmt1(r.RelSpeed)}<br>Call: ${r.PitchCall}<br>Result: ${r.PlayResult}`;
+  const draw = (id, subset, title) => zoneScatter(document.getElementById(id), subset,
+    {colorField:'Pitch', colorMap:PITCH_COLORS, title, tooltipFn:tip});
+  draw('loc-all', rows, 'Location (All)');
+  draw('loc-lhb', rows.filter(r=>r.BatterSide==='Left'), 'Location (LHB)');
+  draw('loc-rhb', rows.filter(r=>r.BatterSide==='Right'), 'Location (RHB)');
+  draw('loc-inplay', rows.filter(r=>r.PitchCall==='InPlay'), 'Location (InPlay)');
+}
+
+/* ── Pitching Tab 7: Heat Maps (FB/OS/BB) ── */
+function renderPitchHeatMaps(rows){
+  const panel = document.getElementById('panel-heatmaps');
+  panel.innerHTML = `
+    <div class="grid grid-3">
+      <div class="chart-box"><div id="hm-fb"></div></div>
+      <div class="chart-box"><div id="hm-os"></div></div>
+      <div class="chart-box"><div id="hm-bb"></div></div>
+    </div>`;
+  zoneDensity(document.getElementById('hm-fb'), rows.filter(r=>r.FBc), 'FB Location');
+  zoneDensity(document.getElementById('hm-os'), rows.filter(r=>r.OSc), 'OS Location');
+  zoneDensity(document.getElementById('hm-bb'), rows.filter(r=>r.BBc), 'BB Location');
+}
+
+/* ── Pitching Tabs 8/9: IZ Whiff / Chase (BatterSide x FB/OS/BB) ── */
+function renderPitchingHeatGrid(panelId, rows, kind){
+  const panel = document.getElementById(panelId);
+  const label = kind==='whiff' ? 'Whiff' : 'Chase';
+  panel.innerHTML = `
+    <div class="section-label">Right-Handed Hitters</div>
+    <div class="grid grid-3">
+      <div class="chart-box"><div id="${kind}p_rhh_fb"></div></div>
+      <div class="chart-box"><div id="${kind}p_rhh_os"></div></div>
+      <div class="chart-box"><div id="${kind}p_rhh_bb"></div></div>
+    </div>
+    <div class="section-label chart-row">Left-Handed Hitters</div>
+    <div class="grid grid-3">
+      <div class="chart-box"><div id="${kind}p_lhh_fb"></div></div>
+      <div class="chart-box"><div id="${kind}p_lhh_os"></div></div>
+      <div class="chart-box"><div id="${kind}p_lhh_bb"></div></div>
+    </div>`;
+  const zoneWanted = kind==='whiff';
+  const base = r => r.PitchCall==='StrikeSwinging' && r.Zone===zoneWanted;
+  const draw = (id, side, group, title) => zoneDensity(document.getElementById(id),
+    rows.filter(r=>base(r) && r.BatterSide===side && r[group]), title);
+  draw(`${kind}p_rhh_fb`, 'Right', 'FBc', `RHH FB ${label}`);
+  draw(`${kind}p_rhh_os`, 'Right', 'OSc', `RHH OS ${label}`);
+  draw(`${kind}p_rhh_bb`, 'Right', 'BBc', `RHH BB ${label}`);
+  draw(`${kind}p_lhh_fb`, 'Left', 'FBc', `LHH FB ${label}`);
+  draw(`${kind}p_lhh_os`, 'Left', 'OSc', `LHH OS ${label}`);
+  draw(`${kind}p_lhh_bb`, 'Left', 'BBc', `LHH BB ${label}`);
+}
+
+/* ── Pitching Tab 10: Velo Over Time ── */
+function renderVeloOverTime(rows){
+  const panel = document.getElementById('panel-velotime');
+  panel.innerHTML = `<div class="chart-box"><div id="velo-time" style="height:420px;"></div></div>`;
+  const sorted = rows.slice().sort((a,b)=>(a.Date||'').localeCompare(b.Date));
+  const maxVelo = maxOf(sorted, r=>r.RelSpeed) || 1;
+  const cats = [...new Set(sorted.map(r=>r.Pitch))].sort();
+  const traces = [];
+  cats.forEach(cat=>{
+    const idxs = sorted.map((r,i)=>({r,i})).filter(o=>o.r.Pitch===cat);
+    const xs = idxs.map(o=>o.i+1);
+    const ys = idxs.map(o=> o.r.RelSpeed!=null ? (o.r.RelSpeed/maxVelo)*100 : null);
+    traces.push({ type:'scatter', mode:'markers', name:cat, x:xs, y:ys,
+      marker:{ color:PITCH_COLORS[cat]||'#888', size:7, line:{width:1,color:'#fff'} } });
+    traces.push({ type:'scatter', mode:'lines', name:cat+' trend', showlegend:false,
+      x:xs, y:rollingTrend(xs,ys), line:{ color:PITCH_COLORS[cat]||'#888', width:2.5 } });
+  });
+  Plotly.newPlot(document.getElementById('velo-time'), traces, {
+    title:{text:'Percentage of Max Velocity', font:{size:13}},
+    xaxis:{title:'Pitch Number'}, yaxis:{title:'% of Max Velocity', range:[50,100]},
+    legend:{orientation:'h', y:-0.2}, margin:{l:50,r:10,t:34,b:60}
+  }, {displayModeBar:false, responsive:true});
+}
+
+/* ── Pitching Tab 11: Strike% Over Time ── */
+function renderStrikeOverTime(rows){
+  const panel = document.getElementById('panel-striketime');
+  panel.innerHTML = `<div class="chart-box"><div id="strike-time" style="height:420px;"></div></div>`;
+  const sorted = rows.slice().sort((a,b)=>(a.Date||'').localeCompare(b.Date));
+  const cats = [...new Set(sorted.map(r=>r.Pitch))].sort();
+  const traces = [];
+  cats.forEach(cat=>{
+    const idxs = sorted.map((r,i)=>({r,i})).filter(o=>o.r.Pitch===cat);
+    let strikes = 0;
+    const xs = idxs.map(o=>o.i+1);
+    const ys = idxs.map((o,j)=>{ if (o.r.Strike) strikes++; return (strikes/(j+1))*100; });
+    traces.push({ type:'scatter', mode:'markers', name:cat, x:xs, y:ys,
+      marker:{ color:PITCH_COLORS[cat]||'#888', size:7, line:{width:1,color:'#fff'} } });
+    traces.push({ type:'scatter', mode:'lines', name:cat+' trend', showlegend:false,
+      x:xs, y:rollingTrend(xs,ys), line:{ color:PITCH_COLORS[cat]||'#888', width:2.5 } });
+  });
+  Plotly.newPlot(document.getElementById('strike-time'), traces, {
+    title:{text:'Cumulative Strike %', font:{size:13}},
+    xaxis:{title:'Pitch Number'}, yaxis:{title:'Strike %', range:[0,100]},
+    legend:{orientation:'h', y:-0.2}, margin:{l:50,r:10,t:34,b:60}
+  }, {displayModeBar:false, responsive:true});
+}
+
+function initSidebar(){
+  const seasonSel = document.getElementById('seasonInput');
+  const seasonKeys = [...SEASON_DATE_RANGES.keys()];
+  seasonSel.innerHTML = seasonKeys.map(s=>`<option value="${s}">${s}</option>`).join('');
+  state.season = seasonKeys[0] || state.season;
+  seasonSel.value = state.season;
+
+  const dateStart = document.getElementById('dateStart');
+  const dateEnd = document.getElementById('dateEnd');
+
+  function applySeason(){
+    const [start,end] = SEASON_DATE_RANGES.get(state.season);
+    state.dateStart = start; state.dateEnd = end;
+    dateStart.min = start; dateStart.max = end; dateStart.value = start;
+    dateEnd.min = start; dateEnd.max = end; dateEnd.value = end;
+  }
+
+  function refreshPlayerOptions(){
+    const players = filteredPlayers();
+    const playerSel = document.getElementById('playerInput');
+    const label = document.getElementById('playerLabel');
+    const noun = state.mode === 'pitching' ? 'Pitcher' : 'Hitter';
+    label.textContent = noun;
+    const prev = state.player;
+    playerSel.innerHTML = ['All', ...players].map(p=>`<option value="${p}">${p}</option>`).join('');
+    state.player = players.includes(prev) ? prev : 'All';
+    playerSel.value = state.player;
+    document.getElementById('playerCount').textContent = `${players.length} ${noun.toLowerCase()}(s) in range`;
+  }
+
+  function refreshGameOptions(){
+    const games = filteredGames();
+    const gameSel = document.getElementById('gameInput');
+    gameSel.innerHTML = ['All', ...games].map(g=>
+      `<option value="${g}">${g==='All'?'All':g.replace(/\s*\(.*\)$/,'')}</option>`).join('');
+    state.games = ['All'];
+    [...gameSel.options].forEach(o=>{ o.selected = o.value==='All'; });
+  }
+
+  seasonSel.addEventListener('change', ()=>{
+    state.season = seasonSel.value;
+    applySeason(); refreshPlayerOptions(); refreshGameOptions(); renderAll();
+  });
+  dateStart.addEventListener('change', ()=>{ state.dateStart = dateStart.value; refreshPlayerOptions(); refreshGameOptions(); renderAll(); });
+  dateEnd.addEventListener('change', ()=>{ state.dateEnd = dateEnd.value; refreshPlayerOptions(); refreshGameOptions(); renderAll(); });
+
+  document.getElementById('playerInput').addEventListener('change', e=>{ state.player = e.target.value; renderAll(); });
+  document.getElementById('gameInput').addEventListener('change', e=>{
+    const selected = [...e.target.selectedOptions].map(o=>o.value);
+    state.games = selected.length ? selected : ['All'];
+    renderAll();
+  });
+
+  applySeason();
+  refreshPlayerOptions();
+  refreshGameOptions();
+}
+
+/* ============================================================
+   MAIN RENDER LOOP — only the active tab is (re)rendered
+   ============================================================ */
+function renderAll(){
+  showActivePanel();
+  const rows = fdata();
+  if (state.mode === 'pitching'){
+    switch(activeTab){
+      case 'results':     renderPitchingResults(rows); break;
+      case 'resultsplit': renderPitchingResultsSplit(rows); break;
+      case 'metrics':     renderPitchingMetrics(rows); break;
+      case 'releaseext':  renderReleaseExtension(rows); break;
+      case 'strikecount': renderStrikeByCount(rows); break;
+      case 'locations':   renderPitchLocations(rows); break;
+      case 'heatmaps':    renderPitchHeatMaps(rows); break;
+      case 'izwhiffp':    renderPitchingHeatGrid('panel-izwhiffp', rows, 'whiff'); break;
+      case 'chasep':      renderPitchingHeatGrid('panel-chasep', rows, 'chase'); break;
+      case 'velotime':    renderVeloOverTime(rows); break;
+      case 'striketime':  renderStrikeOverTime(rows); break;
+    }
+  } else {
+    switch(activeTab){
+      case 'traditional': renderTraditional(rows); break;
+      case 'spray':       renderSprayTab(rows); break;
+      case 'advanced':    renderAdvanced(rows); break;
+      case 'evstats':     renderEvStats(rows); break;
+      case 'evcharts':    renderEvCharts(rows); break;
+      case 'izwhiff':     renderHeatGrid('panel-izwhiff', rows, 'whiff'); break;
+      case 'chase':       renderHeatGrid('panel-chase', rows, 'chase'); break;
+      case 'swingdec':    renderDecisionGrid('panel-swingdec', rows, 'swing'); break;
+      case 'takes':       renderDecisionGrid('panel-takes', rows, 'take'); break;
+      case 'contact':     renderContactTab(rows); break;
+      case 'sequences':   renderSequences(rows); break;
+    }
+  }
+}
+
+/* ============================================================
+   BOOT — landing screen picks the mode, then the app initializes
+   ============================================================ */
+function enterMode(mode){
+  state.mode = mode;
+  state.player = 'All';
+  activeTab = null;
+  document.getElementById('landingScreen').style.display = 'none';
+  document.getElementById('appScreen').style.display = 'flex';
+  buildTabPanelsSkeleton();
+  initSidebar();
+  renderAll();
+}
+function backToLanding(){
+  state.mode = null;
+  document.getElementById('appScreen').style.display = 'none';
+  document.getElementById('landingScreen').style.display = 'flex';
+}
+document.getElementById('tileHitting').addEventListener('click', ()=>enterMode('hitting'));
+document.getElementById('tilePitching').addEventListener('click', ()=>enterMode('pitching'));
+document.getElementById('backToLanding').addEventListener('click', backToLanding);
