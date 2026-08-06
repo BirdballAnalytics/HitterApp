@@ -305,7 +305,7 @@ def export(df):
         "FBc", "OSc", "BBc", "OffSpeed",
         "AB", "PA", "IP", "HitProb", "Slug", "wOBA", "xwOBA", "HitCk",
         # Pitching-specific raw metrics
-        "RelHeight", "RelSide", "Extension", "SpinRate", "SpinAxis", "VAA", "OutsOnPlay",
+        "RelHeight", "RelSide", "Extension", "SpinRate", "SpinAxis", "VAA", "HAA", "OutsOnPlay",
         # Count-state flags (pitching "Strike% By Count" tab)
         "Cnt01", "Cnt10", "Cnt11", "Cnt02", "Cnt12", "Cnt22", "Cnt20", "Cnt21", "Cnt30", "Cnt31", "CntFull",
     ]
@@ -343,7 +343,7 @@ def export(df):
             n(r["HitProbabilityCheck"]), n(r["SluggingCheck"]), n(r["WOBACheck"]), n(r["xwOBACheck"]),
             n(r["HitCheck"]) if pd.notna(r["HitCheck"]) else None,
             r1(r["RelHeight"]), r1(r["RelSide"]), r1(r["Extension"]), r1(r["SpinRate"]), r1(r["SpinAxis"]),
-            r1(r["VertApprAngle"]), r1(r["OutsOnPlay"]),
+            r1(r["VertApprAngle"]), r1(r["HorzApprAngle"]), r1(r["OutsOnPlay"]),
             b(r["Cnt01"]), b(r["Cnt10"]), b(r["Cnt11"]), b(r["Cnt02"]), b(r["Cnt12"]), b(r["Cnt22"]),
             b(r["Cnt20"]), b(r["Cnt21"]), b(r["Cnt30"]), b(r["Cnt31"]), b(r["CntFull"]),
         ])
