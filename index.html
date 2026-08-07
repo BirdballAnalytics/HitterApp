@@ -187,14 +187,15 @@
     #tabsContent{ margin:0; }
     .tab-panel{ display:none !important; }
     .tab-panel.active{ display:block !important; }
-    .section-label{ font-size:9px; margin:6px 0 4px 0; padding-bottom:2px; }
-    table.stat-table{ font-size:7px; }
-    table.stat-table th, table.stat-table td{ padding:2px 4px; }
-    .scout-top-grid{ grid-template-columns:1.3fr 1fr; gap:8px; }
-    .scout-top-grid-2{ grid-template-columns:0.62fr 1fr; gap:8px; }
-    .scout-heat-grid{ gap:4px; }
-    .chart-box{ border:1px solid #ddd; padding:2px; break-inside:avoid; }
-    .grid{ gap:4px; }
+    .section-label{ font-size:8px; margin:4px 0 3px 0; padding-bottom:1px; }
+    .section-label.chart-row{ margin-top:5px; }
+    table.stat-table{ font-size:6.5px; }
+    table.stat-table th, table.stat-table td{ padding:1px 3px; }
+    .scout-top-grid{ grid-template-columns:1.3fr 1fr; gap:6px; }
+    .scout-top-grid-2{ grid-template-columns:0.62fr 1fr; gap:6px; }
+    .scout-heat-grid{ gap:3px; }
+    .chart-box{ border:1px solid #ddd; padding:1px; break-inside:avoid; }
+    .grid{ gap:3px; }
   }
 </style>
 </head>
@@ -1736,10 +1737,30 @@ document.getElementById('tileScout').addEventListener('click', ()=>enterMode('sc
 // Plotly draws to a fixed pixel size at render time. Print CSS shrinks the
 // scout report's containers for one-page layout, so force a resize right
 // before the browser paints the print output, or charts would clip/overflow.
+// Plotly draws to a fixed pixel size at render time. For print, we shrink
+// each chart's actual height (not just its CSS container) and force a
+// redraw so the one-page layout has real headroom, then restore on-screen
+// sizing afterward.
+const PRINT_CHART_HEIGHTS = {
+  'scout-pitchplot': 170,
+  'scout-lhh-fb': 105, 'scout-lhh-bb': 105, 'scout-lhh-ch': 105, 'scout-dmg-lhh': 105,
+  'scout-rhh-fb': 105, 'scout-rhh-bb': 105, 'scout-rhh-ch': 105, 'scout-dmg-rhh': 105,
+};
 window.addEventListener('beforeprint', ()=>{
-  if (state.mode !== 'scout') return;
-  document.querySelectorAll('#panel-scoutreport [id^="scout-"]').forEach(div=>{
-    if (div.dataset && window.Plotly && div._fullLayout) window.Plotly.Plots.resize(div);
+  if (state.mode !== 'scout' || !window.Plotly) return;
+  Object.entries(PRINT_CHART_HEIGHTS).forEach(([id, h])=>{
+    const div = document.getElementById(id);
+    if (!div || !div._fullLayout) return;
+    div.dataset.onscreenHeight = div._fullLayout.height;
+    window.Plotly.relayout(div, {height: h});
+  });
+});
+window.addEventListener('afterprint', ()=>{
+  if (state.mode !== 'scout' || !window.Plotly) return;
+  Object.keys(PRINT_CHART_HEIGHTS).forEach(id=>{
+    const div = document.getElementById(id);
+    if (!div || !div.dataset.onscreenHeight) return;
+    window.Plotly.relayout(div, {height: Number(div.dataset.onscreenHeight)});
   });
 });
 document.getElementById('backToLanding').addEventListener('click', backToLanding);
