@@ -797,7 +797,7 @@ function makeArc(bearingDeg, distFt, laDeg, evMph, n=40){
     const gnd = gndArr[i]*scale;
     let h = evFps*Math.sin(la)*t - 0.5*g*t*t;
     if (h<0) h=0;
-    x.push(-gnd*Math.sin(bear));
+    x.push(gnd*Math.sin(bear));
     y.push(gnd*Math.cos(bear));
     z.push(h);
   }
@@ -849,7 +849,7 @@ function renderSprayChart(div, rows){
     r.LA!=null && r.EV!=null && r.EV>0 && r.Dist>0
   ).map(r=>{
     const bearRad = r.Bearing*Math.PI/180;
-    return { ...r, sx:-Math.sin(bearRad)*r.Dist, sy:Math.cos(bearRad)*r.Dist };
+    return { ...r, sx:Math.sin(bearRad)*r.Dist, sy:Math.cos(bearRad)*r.Dist };
   });
 
   const tip = r => `<b>${r.PlayResult}</b><br>EV: ${fmt1(r.EV)} mph  LA: ${fmt1(r.LA)}°<br>` +
@@ -996,7 +996,7 @@ function renderContactPlot(div, rows){
   const szH=[-szHw,szHw,szHw,-szHw,-szHw], szZ=[szLo,szLo,szHi,szHi,szLo], szD=[0,0,0,0,0];
   const refDepths=[0,12,24,36], refLabels=['plate front','1 ft out front','2 ft out front','3 ft out front'];
   const hSpan=[-1.5,1.5];
-  const refFloor = Math.min(...tbl.map(r=>r.CPZ)) - 0.3;
+  const refFloor = Math.min(...tbl.map(r=>r.CPX)) - 0.3;
 
   const axisStyle = title => ({title, color:'#8a96a8', gridcolor:'#1e2530', zerolinecolor:'#2e3a4a',
     showbackground:true, backgroundcolor:'#111820', tickfont:{color:'#8a96a8', size:9}});
@@ -1024,7 +1024,10 @@ function renderContactPlot(div, rows){
   const mapArr = (hs,ds,zs)=>({ x:hs.map((h,i)=>map(h,ds[i],zs[i]).x),
     y:hs.map((h,i)=>map(h,ds[i],zs[i]).y), z:hs.map((h,i)=>map(h,ds[i],zs[i]).z) });
 
-  const pts = mapArr(tbl.map(r=>r.CPX), tbl.map(r=>r.CPY), tbl.map(r=>r.CPZ));
+  // CPX behaves like a height distribution, CPZ is symmetric around 0 (a
+  // horizontal offset), and CPY is a strictly-positive depth measurement in
+  // feet (needs *12 to match the reference lines, which are in inches).
+  const pts = mapArr(tbl.map(r=>r.CPZ), tbl.map(r=>r.CPY*12), tbl.map(r=>r.CPX));
   const pl = mapArr(plateH, plateD, plateZ);
   const szM = mapArr(szH, szD, szZ);
 
