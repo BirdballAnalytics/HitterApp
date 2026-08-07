@@ -99,6 +99,52 @@
   .scout-top-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;align-items:start;}
   .scout-top-grid-2{display:grid;grid-template-columns:0.62fr 1fr;gap:14px;align-items:start;}
   .scout-heat-grid .chart-box{padding:3px;}
+
+  /* -- Cheat Sheet (whole staff) -- */
+  .cheat-sheet{background:#0d1117;border-radius:8px;padding:10px;overflow-x:auto;}
+  .cheat-pitcher-block{border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:6px;margin-bottom:6px;break-inside:avoid;}
+  .cheat-row{display:grid;
+    grid-template-columns:70px 60px 60px 60px 65px 40px 150px 240px 150px 40px 65px 60px 60px 60px 70px;
+    gap:4px;align-items:center;padding:6px 4px 2px;min-width:1300px;}
+  .cheat-tilewrap{display:flex;flex-direction:column;align-items:center;}
+  .cheat-tile-label{color:#5b6472;font-size:6px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:2px;}
+  .cheat-spray{width:58px;height:58px;}
+  .cheat-heat{width:52px;height:52px;}
+  .cheat-go-card{width:52px;height:52px;background:#10141a;border:1px solid #2a3038;border-radius:3px;
+    padding:2px;display:flex;flex-direction:column;box-sizing:border-box;}
+  .cheat-go-collabels{display:flex;justify-content:space-between;font-size:5px;color:#5b6472;padding:0 1px;}
+  .cheat-go-body{display:flex;flex:1;gap:1px;margin-top:1px;}
+  .cheat-go-rowlabels{display:flex;flex-direction:column;justify-content:space-between;font-size:5px;color:#5b6472;padding:1px 0;}
+  .cheat-go-grid{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:1px;}
+  .cheat-go-cell{background:#1a1f27;border:1px solid #262c34;}
+  .cheat-go-cell.cheat-go-hi{background:#1d5c38;display:flex;align-items:center;justify-content:center;}
+  .cheat-go-text{color:#7ee787;font-weight:800;font-size:7px;}
+  .cheat-battericon{width:22px;height:46px;margin:2px auto 0;}
+  .cheat-usage-list{display:flex;flex-direction:column;gap:1.5px;font-size:7px;padding:0 4px;}
+  .cheat-usage-row{display:flex;align-items:center;gap:3px;color:#93a0b0;white-space:nowrap;}
+  .cheat-usage-num{width:20px;text-align:right;color:#5b6472;}
+  .cheat-usage-pct{width:26px;}
+  .cheat-usage-bar{height:5px;border-radius:2px;}
+  .cheat-usage-abbr{font-weight:700;}
+  .cheat-center{padding:0 4px;text-align:center;}
+  .cheat-namehdr{font-size:6px;color:#5b6472;letter-spacing:.12em;}
+  .cheat-name{font-size:13px;font-weight:800;color:#e5e9f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .cheat-firstname{font-size:9px;color:#93a0b0;margin-bottom:3px;}
+  .cheat-rolepill{display:inline-block;background:#1e3a5f;color:#7dd3fc;font-size:8px;font-weight:700;
+    padding:1px 7px;border-radius:8px;margin-bottom:2px;}
+  .cheat-sub{font-size:8px;color:#6b7684;margin-bottom:4px;}
+  .cheat-extbadges{margin-bottom:5px;}
+  .cheat-extbadge{background:rgba(255,255,255,.06);color:#93a0b0;font-size:7.5px;padding:1px 5px;border-radius:4px;margin:0 1px;}
+  .cheat-line{font-size:7.5px;color:#93a0b0;text-align:left;margin-top:2px;}
+  .cheat-line-label{color:#5b6472;font-weight:700;}
+  .cheat-tagswrap{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:4px 24px 8px;}
+  .cheat-tagsrow{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:5px;}
+  .cheat-tag{font-size:7.5px;padding:1px 6px;border-radius:9px;font-weight:700;}
+  .cheat-tag-plate{background:rgba(56,189,248,.15);color:#7dd3fc;}
+  .cheat-tag-hit{background:rgba(251,146,60,.18);color:#fb923c;}
+  .cheat-tag-fb{background:rgba(139,92,246,.15);color:#c4b5fd;}
+  .cheat-notes{width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);
+    border-radius:4px;color:#93a0b0;font-size:9px;padding:5px 8px;font-family:inherit;box-sizing:border-box;}
   @media (max-width:900px){.scout-top-grid{grid-template-columns:1fr;} .scout-top-grid-2{grid-template-columns:1fr;}}
 
   /* ── Tables ── */
@@ -245,6 +291,11 @@
     <select id="playerInput"></select>
     <div id="playerCount"></div>
 
+    <div class="sidebar-divider" id="teamDivider" style="display:none;"></div>
+    <label id="teamLabel" for="teamInput" style="display:none;">Team</label>
+    <select id="teamInput" style="display:none;"></select>
+    <div id="teamCount"></div>
+
     <div class="sidebar-divider"></div>
     <label for="gameInput">Game(s)</label>
     <select id="gameInput" multiple></select>
@@ -320,11 +371,12 @@ const SEASON_DATE_RANGES = computeSeasonRanges();
    FILTER STATE
    ============================================================ */
 const state = {
-  mode: null,        // 'hitting' | 'pitching'
+  mode: null,        // 'hitting' | 'pitching' | 'scout'
   season: "2026 SPRING",
   dateStart: null,
   dateEnd: null,
   player: "All",
+  team: null,
   games: ["All"]
 };
 
@@ -382,6 +434,22 @@ function fdata(){
       if (playerAll){ if (r.BatterTeam !== TEAM) return false; }
       else { if (r.Batter !== state.player) return false; }
     }
+    if (!inRange(r.Date, s, e)) return false;
+    if (gameSet && !gameSet.has(r.Game)) return false;
+    return true;
+  });
+}
+
+// All pitches thrown by every pitcher on a given team, respecting the
+// season/date-range/game filters — used by the Cheat Sheet (whole staff),
+// as opposed to fdata() which is scoped to a single selected player.
+function teamData(){
+  const [s,e] = [state.dateStart, state.dateEnd];
+  const gamesAll = state.games.includes("All") || state.games.length===0;
+  const gameSet = gamesAll ? null : new Set(state.games);
+  if (!state.team) return [];
+  return ALL_ROWS.filter(r=>{
+    if (r.PitcherTeam !== state.team) return false;
     if (!inRange(r.Date, s, e)) return false;
     if (gameSet && !gameSet.has(r.Game)) return false;
     return true;
@@ -544,12 +612,12 @@ function renderTable(container, rowObj, opts={}){
 const SZ_BOX = { x:[-0.708,0.708,0.708,-0.708,-0.708], y:[1.755,1.755,3.378,3.378,1.755] };
 const HOME_PLATE_ICON = { x:[-0.708,-0.667,0,0.667,0.708,-0.708], y:[0,0.167,0.333,0.167,0,0] };
 
-function zoneShapes(){
+function zoneShapes(dark=false){
   return [
     { type:'path', path:`M ${SZ_BOX.x.map((x,i)=>`${i===0?'':'L'}${x},${SZ_BOX.y[i]}`).join(' ')} Z`,
-      line:{color:'#444',width:1.5}, fillcolor:'rgba(0,0,0,0)' },
+      line:{color: dark?'rgba(255,255,255,.5)':'#444', width:1.5}, fillcolor:'rgba(0,0,0,0)' },
     { type:'path', path:`M ${HOME_PLATE_ICON.x.map((x,i)=>`${i===0?'':'L'}${x},${HOME_PLATE_ICON.y[i]}`).join(' ')} Z`,
-      line:{color:'#000',width:1}, fillcolor:'#ede1d2' }
+      line:{color: dark?'rgba(255,255,255,.3)':'#000', width:1}, fillcolor: dark?'rgba(255,255,255,.08)':'#ede1d2' }
   ];
 }
 
@@ -580,23 +648,94 @@ function zoneScatter(div, rows, {colorField, colorMap, title, tooltipFn}){
 
 /* Density "heat map" for whiff/chase tabs — mirrors sz_density_plot()
    using Plotly's histogram2dcontour as a stand-in for ggplot's stat_density_2d. */
-function zoneDensity(div, rows, title, height=300){
+function zoneDensity(div, rows, title, height=300, dark=false){
   const x = rows.map(r=>r.PLS), y = rows.map(r=>r.PLH);
   const traces = [{
     type:'histogram2dcontour', x, y,
-    colorscale:[[0,'#ffffff'],[1,'#8C2232']],
+    colorscale: dark
+      ? [[0,'#10141a'],[0.35,'#3a2f4a'],[0.6,'#c2410c'],[1,'#fbbf24']]
+      : [[0,'#ffffff'],[1,'#8C2232']],
     showscale:false, contours:{coloring:'fill', showlines:false},
     ncontours: 12
   }];
   const layout = {
-    title:{text:`${title} (n=${rows.length})`, font:{size:height<250?9:11}},
+    title:{text:`${title}${dark?'':` (n=${rows.length})`}`, font:{size:height<250?9:11, color: dark?'#93a0b0':undefined}},
     xaxis:{title:'', range:[-2,2], zeroline:false, showticklabels:false},
     yaxis:{title:'', range:[0,4], zeroline:false, showticklabels:false, scaleanchor:'x'},
-    shapes: zoneShapes(),
-    margin:{l:6,r:6,t:24,b:6}, height, showlegend:false,
-    plot_bgcolor:'#fff'
+    shapes: zoneShapes(dark),
+    margin:{l:6,r:6,t:dark?16:24,b:6}, height, showlegend:false,
+    plot_bgcolor: dark?'#10141a':'#fff', paper_bgcolor: dark?'#10141a':'#fff'
   };
   Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
+}
+
+/* Simplified 2D "spray" widget: dots for batted-ball outcomes (Bearing/Distance)
+   inside a minimal diamond guide, dark-card style. A compact stand-in for the
+   full 3D spray chart — good enough to show shape/spread at this tiny size. */
+function renderMiniSpray(div, rows, title){
+  const inPlay = rows.filter(r=>r.InPlay && r.Bearing!=null && r.Dist!=null && r.Dist>0);
+  const pts = inPlay.map(r=>{
+    const rad = r.Bearing*Math.PI/180;
+    return { x:Math.sin(rad)*r.Dist, y:Math.cos(rad)*r.Dist, damage: r.H===1||r.HardHit===1 };
+  });
+  const maxD = 340;
+  const diamond = { x:[0,-maxD*0.72,0,maxD*0.72,0], y:[0,maxD*0.72,maxD*1.02,maxD*0.72,0] };
+  Plotly.newPlot(div, [
+    { type:'scatter', mode:'lines', x:diamond.x, y:diamond.y, line:{color:'#3a4150', width:1}, showlegend:false, hoverinfo:'skip' },
+    { type:'scatter', mode:'markers', x:pts.map(p=>p.x), y:pts.map(p=>p.y),
+      marker:{ size:4, color: pts.map(p=>p.damage?'#fb923c':'#5b6472'), opacity:0.85, line:{width:0} },
+      showlegend:false, hoverinfo:'skip' }
+  ], {
+    title:{text:title, font:{size:9,color:'#93a0b0'}},
+    xaxis:{visible:false, range:[-maxD,maxD]}, yaxis:{visible:false, range:[-20,maxD*1.05], scaleanchor:'x'},
+    margin:{l:2,r:2,t:16,b:2}, height:120, plot_bgcolor:'#10141a', paper_bgcolor:'#10141a', showlegend:false
+  }, {displayModeBar:false, responsive:true});
+}
+
+// Starters typically throw far more pitches per outing than relievers.
+// No explicit role field exists in TrackMan exports, so this threshold is
+// a practical stand-in — flag any that look misclassified.
+function classifyRole(rows){
+  const games = new Set(rows.map(r=>r.Game)).size || 1;
+  return (rows.length / games) >= 40 ? 'Starter' : 'Bullpen';
+}
+
+function pitchMixBarHTML(rows){
+  const total = rows.length || 1;
+  const byPitch = groupBy(rows, r=>r.Pitch);
+  const segs = sortPitchKeys([...byPitch.keys()]).map(p=>({
+    p, pct: byPitch.get(p).length/total, color: PITCH_COLORS[p]||'#888'
+  })).filter(s=>s.pct>0.02);
+  const bars = segs.map(s=>`<div style="flex:${s.pct};background:${s.color};" title="${s.p} ${pct1(s.pct)}"></div>`).join('');
+  const legend = segs.map(s=>`<span style="color:${s.color};">${PITCH_ABBR[s.p]||s.p} ${pct1(s.pct)}</span>`).join(' &nbsp; ');
+  return `<div class="cheat-mixbar">${bars}</div><div class="cheat-mixlegend">${legend}</div>`;
+}
+
+function rateBadgesHTML(rows){
+  const stats = pitchingByPitchStats(rows);
+  return `<span class="cheat-badge cheat-badge-slg">SLG ${stats.SLG}</span>
+          <span class="cheat-badge cheat-badge-baa">BAA ${stats.BAA}</span>`;
+}
+
+function plateTendencyLabel(rows){
+  const zoned = rows.filter(r=>r.PLS!=null);
+  if (!zoned.length) return 'Plate: —';
+  const avg = mean(zoned, r=>r.PLS);
+  const side = avg < -0.28 ? 'Left' : avg > 0.28 ? 'Right' : 'Middle';
+  return `Plate: ${side}`;
+}
+
+function hitDirectionLabel(rows){
+  const inPlay = rows.filter(r=>r.InPlay && r.Bearing!=null && r.BatterSide);
+  if (!inPlay.length) return 'Hit: —';
+  const counts = {Pull:0, Middle:0, Oppo:0};
+  inPlay.forEach(r=>{
+    const pulled = r.BatterSide==='Right' ? r.Bearing < -12 : r.Bearing > 12;
+    const oppo   = r.BatterSide==='Right' ? r.Bearing > 12  : r.Bearing < -12;
+    counts[pulled ? 'Pull' : oppo ? 'Oppo' : 'Middle']++;
+  });
+  const best = Object.keys(counts).reduce((a,b)=> counts[b]>counts[a]?b:a, 'Middle');
+  return `Hit: ${best}`;
 }
 
 /* ============================================================
@@ -997,7 +1136,8 @@ const TABS_PITCHING = [
   {id:'striketime', label:'Strike% Over Time'}
 ];
 const TABS_SCOUT = [
-  {id:'scoutreport', label:'Scouting Report'}
+  {id:'scoutreport', label:'Scouting Report'},
+  {id:'cheatsheet', label:'Cheat Sheet'}
 ];
 function currentTabs(){
   if (state.mode === 'pitching') return TABS_PITCHING;
@@ -1012,7 +1152,7 @@ function buildTabPanelsSkeleton(){
   const nav = document.getElementById('tabsNav');
   nav.innerHTML = tabs.map(t=>`<button class="tab-btn${t.id===activeTab?' active':''}" data-tab="${t.id}">${t.label}</button>`).join('');
   nav.querySelectorAll('.tab-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{ activeTab = btn.dataset.tab; renderAll(); });
+    btn.addEventListener('click', ()=>{ activeTab = btn.dataset.tab; syncSidebarForTab(); renderAll(); });
   });
 
   const content = document.getElementById('tabsContent');
@@ -1602,6 +1742,273 @@ function renderScoutReport(rows){
   draw('scout-dmg-lhh','Left',  isDamage, 'Damage');
 }
 
+/* -- Cheat Sheet: whole pitching staff at a glance --
+   One dense dark row per pitcher, split into a "vs RHH" half and a "vs LHH"
+   half mirrored around a center name/info block: a damage spray chart, three
+   heat maps (Fastballs / Breaking-Balls-Off-Speed / Damage), a "Go!" zone
+   quadrant (best-quadrant highlight, computed per batter side so IN/AWAY
+   map correctly to that side's plate geometry), a batter silhouette, and a
+   usage list (in-zone pitch count + usage% per pitch type). Pitchers are
+   listed alphabetically. */
+
+function battericonSVG(flip){
+  const t = flip ? ' style="transform:scaleX(-1)"' : '';
+  return `<svg viewBox="0 0 24 48" width="100%" height="100%"${t}>
+    <circle cx="12" cy="6" r="4" fill="#5b6472"/>
+    <path d="M12 10 L12 26 M12 14 L4 20 M12 14 L20 10 M12 26 L6 44 M12 26 L18 44"
+      stroke="#5b6472" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  </svg>`;
+}
+
+// "Go!" zone quadrant: highlights whichever quadrant has the highest damage
+// rate (hit or 95+ EV) for this batter side, with IN/AWAY mapped correctly
+// per side (inside = arm-side of plate for that specific batter hand).
+function renderGoCard(div, rows, side){
+  const midY = (1.755 + 3.378) / 2;
+  const xMin=-1.1, xMax=1.1, yMin=1.0, yMax=4.15;
+  const totals = {ul:0, ur:0, dl:0, dr:0};
+  const dmg = {ul:0, ur:0, dl:0, dr:0};
+  rows.forEach(r=>{
+    if (r.PLS==null || r.PLH==null) return;
+    if (r.PLS<xMin || r.PLS>xMax || r.PLH<yMin || r.PLH>yMax) return;
+    const key = (r.PLH>=midY ? 'u':'d') + (r.PLS<0 ? 'l':'r');
+    totals[key]++;
+    if (r.InPlay && (r.H===1 || r.HardHit===1)) dmg[key]++;
+  });
+  const rate = {};
+  Object.keys(totals).forEach(k=> rate[k] = totals[k] ? dmg[k]/totals[k] : -1);
+  const best = Object.keys(rate).reduce((a,b)=> rate[b]>rate[a] ? b : a, 'ul');
+
+  // For RHH, catcher-view-left (negative PLS) is inside; for LHH it's away.
+  const leftLabel = side==='Right' ? 'IN' : 'AWAY';
+  const rightLabel = side==='Right' ? 'AWAY' : 'IN';
+  const cell = key => `<div class="cheat-go-cell${key===best?' cheat-go-hi':''}">${key===best?'<span class="cheat-go-text">Go!</span>':''}</div>`;
+  div.innerHTML = `
+    <div class="cheat-go-collabels"><span>${leftLabel}</span><span>${rightLabel}</span></div>
+    <div class="cheat-go-body">
+      <div class="cheat-go-rowlabels"><span>UP</span><span>DN</span></div>
+      <div class="cheat-go-grid">${cell('ul')}${cell('ur')}${cell('dl')}${cell('dr')}</div>
+    </div>`;
+}
+
+function usageListHTML(rows){
+  const total = rows.length || 1;
+  const byPitch = groupBy(rows, r=>r.Pitch);
+  const list = sortPitchKeys([...byPitch.keys()])
+    .map(p=>({p, rows: byPitch.get(p), pct: byPitch.get(p).length/total}))
+    .sort((a,b)=> b.pct - a.pct)
+    .slice(0,5);
+  return `<div class="cheat-usage-list">${list.map(item=>{
+    const zoneCount = item.rows.filter(r=>r.Zone).length;
+    const color = PITCH_COLORS[item.p]||'#888';
+    return `<div class="cheat-usage-row">
+      <span class="cheat-usage-num">${zoneCount}z</span>
+      <span class="cheat-usage-pct">${pct1(item.pct)}</span>
+      <span class="cheat-usage-bar" style="background:${color};width:${Math.max(6,item.pct*40)}px;"></span>
+      <span class="cheat-usage-abbr" style="color:${color};">${PITCH_ABBR[item.p]||item.p}</span>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function primaryStrikeLinesHTML(rows){
+  const total = rows.length || 1;
+  const byPitch = groupBy(rows, r=>r.Pitch);
+  const top2 = sortPitchKeys([...byPitch.keys()])
+    .map(p=>({p, rows: byPitch.get(p), pct: byPitch.get(p).length/total}))
+    .sort((a,b)=> b.pct - a.pct)
+    .slice(0,2);
+  const primary = top2.map(t=>`<span style="color:${PITCH_COLORS[t.p]||'#ccc'};">${PITCH_ABBR[t.p]||t.p} ${pct1(t.pct)}</span>`).join(', ');
+  const strike = top2.map(t=>{
+    const sk = mean(t.rows, r=>r.Strike);
+    return `<span style="color:${PITCH_COLORS[t.p]||'#ccc'};">${PITCH_ABBR[t.p]||t.p} ${pct1(sk)}z</span>`;
+  }).join(', ');
+  return `<div class="cheat-line"><span class="cheat-line-label">PRIMARY:</span> ${primary}</div>
+          <div class="cheat-line"><span class="cheat-line-label">STRIKE:</span> ${strike}</div>`;
+}
+
+function tagsAndNotesHTML(rows, side, uid){
+  const plate = plateTendencyLabel(rows);
+  const hit = hitDirectionLabel(rows);
+  const fieldAbbr = side==='Right'
+    ? {Pull:'(LF)', Oppo:'(RF)', Middle:''}
+    : {Pull:'(RF)', Oppo:'(LF)', Middle:''};
+  const hitKind = hit.replace('Hit: ','');
+  const hitLabel = `${hit} ${fieldAbbr[hitKind]||''}`.trim();
+  const pre2k = rows.filter(r=>r.Strikes<2);
+  const twoK = rows.filter(r=>r.Strikes===2);
+  const fbPre2k = pct1(pre2k.length? mean(pre2k,r=>r.FBc):NaN);
+  const fbTwoK = pct1(twoK.length? mean(twoK,r=>r.FBc):NaN);
+  const fbOverall = pct1(mean(rows,r=>r.FBc));
+  return `
+    <div class="cheat-tagsrow">
+      <span class="cheat-tag cheat-tag-plate">${plate}</span>
+      <span class="cheat-tag cheat-tag-hit">${hitLabel}</span>
+      <span class="cheat-tag cheat-tag-fb">FB% Pre-2K: ${fbPre2k}</span>
+      <span class="cheat-tag cheat-tag-fb">FB% 2K: ${fbTwoK}</span>
+      <span class="cheat-tag cheat-tag-fb">FB% Overall: ${fbOverall}</span>
+    </div>
+    <input class="cheat-notes" id="${uid}_notes_${side}" type="text" placeholder="vs ${side==='Right'?'RHH':'LHH'} gameplan...">`;
+}
+
+function cheatSheetRow(name, team, rows){
+  const rhh = rows.filter(r=>r.BatterSide==='Right');
+  const lhh = rows.filter(r=>r.BatterSide==='Left');
+  const uid = `cs_${name.replace(/[^a-zA-Z0-9]/g,'')}_${team}`;
+  const throws = rows[0]?.PitcherThrows || '?';
+  const games = new Set(rows.map(r=>r.Game)).size;
+  const [lastFirst, firstName] = (()=>{
+    const parts = name.split(',').map(s=>s.trim());
+    return parts.length===2 ? [parts[0], parts[1]] : [name, ''];
+  })();
+
+  const heatTile = (side) => `
+    <div class="cheat-tilewrap"><div class="cheat-tile-label">DMG SPRAY</div><div id="${uid}_spray_${side}" class="cheat-spray"></div></div>
+    <div class="cheat-tilewrap"><div class="cheat-tile-label">DMG</div><div id="${uid}_dmg_${side}" class="cheat-heat"></div></div>
+    <div class="cheat-tilewrap"><div class="cheat-tile-label">BBOS</div><div id="${uid}_bbos_${side}" class="cheat-heat"></div></div>
+    <div class="cheat-tilewrap"><div class="cheat-tile-label">FB</div><div id="${uid}_fb_${side}" class="cheat-heat"></div></div>
+    <div class="cheat-tilewrap"><div class="cheat-tile-label">GO!</div><div id="${uid}_go_${side}" class="cheat-go-card"></div></div>
+    <div class="cheat-battericon">${battericonSVG(side==='l')}</div>`;
+
+  const html = `
+    <div class="cheat-pitcher-block">
+    <div class="cheat-row">
+      ${heatTile('r')}
+      ${usageListHTML(rhh)}
+      <div class="cheat-center">
+        <div class="cheat-namehdr">NAME</div>
+        <div class="cheat-name">${lastFirst}</div>
+        <div class="cheat-firstname">${firstName}</div>
+        <div class="cheat-rolepill">${classifyRole(rows)==='Starter'?'SP':'RP'}</div>
+        <div class="cheat-sub">${throws}HP &middot; ${games}G</div>
+        <div class="cheat-extbadges">
+          <span class="cheat-extbadge">EXT ${fmt1(mean(rows,r=>r.Extension))}ft</span>
+          <span class="cheat-extbadge">REL ${fmt1(mean(rows,r=>Math.abs(r.RelSide)))}ft</span>
+        </div>
+        ${primaryStrikeLinesHTML(rows)}
+      </div>
+      ${usageListHTML(lhh)}
+      ${heatTile('l')}
+    </div>
+    <div class="cheat-tagswrap">
+      ${tagsAndNotesHTML(rhh, 'Right', uid)}
+      ${tagsAndNotesHTML(lhh, 'Left', uid)}
+    </div>
+    </div>`;
+
+  return { name, html, draw: ()=>{
+    renderMiniSpray(document.getElementById(`${uid}_spray_r`), rhh, '');
+    renderMiniSpray(document.getElementById(`${uid}_spray_l`), lhh, '');
+    zoneDensity(document.getElementById(`${uid}_dmg_r`), rhh.filter(r=>r.InPlay&&(r.H===1||r.HardHit===1)), '', 60, true);
+    zoneDensity(document.getElementById(`${uid}_dmg_l`), lhh.filter(r=>r.InPlay&&(r.H===1||r.HardHit===1)), '', 60, true);
+    zoneDensity(document.getElementById(`${uid}_bbos_r`), rhh.filter(r=>r.OffSpeed), '', 60, true);
+    zoneDensity(document.getElementById(`${uid}_bbos_l`), lhh.filter(r=>r.OffSpeed), '', 60, true);
+    zoneDensity(document.getElementById(`${uid}_fb_r`), rhh.filter(r=>r.FBc), '', 60, true);
+    zoneDensity(document.getElementById(`${uid}_fb_l`), lhh.filter(r=>r.FBc), '', 60, true);
+    renderGoCard(document.getElementById(`${uid}_go_r`), rhh, 'Right');
+    renderGoCard(document.getElementById(`${uid}_go_l`), lhh, 'Left');
+    // Gameplan notes persist locally per pitcher, in this browser only.
+    ['r','l'].forEach(side=>{
+      const full = side==='r' ? 'Right' : 'Left';
+      const el = document.getElementById(`${uid}_notes_${full}`);
+      if (!el) return;
+      const key = `gameplan:${uid}:${full}`;
+      try { el.value = localStorage.getItem(key) || ''; } catch(e){}
+      el.addEventListener('input', ()=>{ try { localStorage.setItem(key, el.value); } catch(e){} });
+    });
+  }};
+}
+
+function renderCheatSheet(rows){
+  const panel = document.getElementById('panel-cheatsheet');
+  if (!state.team){
+    panel.innerHTML = `<div class="empty-msg">No teams found in this date range.</div>`;
+    return;
+  }
+  if (!rows.length){
+    panel.innerHTML = `<div class="empty-msg">No pitches found for this team in the selected range.</div>`;
+    return;
+  }
+  const byPitcher = groupBy(rows, r=>r.Pitcher);
+  const entries = [...byPitcher.keys()].sort().map(name=>cheatSheetRow(name, state.team, byPitcher.get(name)));
+
+  panel.innerHTML = `
+    <div class="scout-header-row">
+      <div class="section-label" style="font-size:13px;color:#333;border:none;margin-top:0;">
+        ${state.team} <span style="color:#999;font-weight:400;">-- ${rows.length} pitches, ${entries.length} pitcher(s)</span>
+      </div>
+      <button id="cheatPrintBtn" class="spray-btn no-print" type="button">Download PDF</button>
+    </div>
+    <div class="cheat-sheet">${entries.map(e=>e.html).join('')}</div>`;
+
+  document.getElementById('cheatPrintBtn').addEventListener('click', ()=>window.print());
+  entries.forEach(e=>e.draw());
+}
+
+function refreshPlayerOptions(){
+  const players = filteredPlayers();
+  const playerSel = document.getElementById('playerInput');
+  const label = document.getElementById('playerLabel');
+  const noun = state.mode === 'pitching' ? 'Pitcher' : (state.mode === 'scout' ? 'Pitcher' : 'Hitter');
+  label.textContent = noun;
+  const prev = state.player;
+
+  if (state.mode === 'scout'){
+    // No "All" option — a scouting report is always for one specific pitcher.
+    playerSel.innerHTML = players.map(p=>{
+      const [name, team] = p.split('||');
+      return `<option value="${p}">${name} (${team})</option>`;
+    }).join('');
+    state.player = players.includes(prev) ? prev : (players[0] || "");
+    playerSel.value = state.player;
+    document.getElementById('playerCount').textContent = `${players.length} pitcher(s) in range`;
+  } else {
+    playerSel.innerHTML = ['All', ...players].map(p=>`<option value="${p}">${p}</option>`).join('');
+    state.player = players.includes(prev) ? prev : 'All';
+    playerSel.value = state.player;
+    document.getElementById('playerCount').textContent = `${players.length} ${noun.toLowerCase()}(s) in range`;
+  }
+}
+
+function filteredTeams(){
+  const [s,e] = [state.dateStart, state.dateEnd];
+  const set = new Set();
+  ALL_ROWS.forEach(r=>{
+    if (r.PitcherTeam && inRange(r.Date,s,e)) set.add(r.PitcherTeam);
+  });
+  return [...set].sort();
+}
+
+function refreshTeamOptions(){
+  const teams = filteredTeams();
+  const teamSel = document.getElementById('teamInput');
+  const prev = state.team;
+  teamSel.innerHTML = teams.map(t=>`<option value="${t}">${t}</option>`).join('');
+  state.team = teams.includes(prev) ? prev : (teams[0] || "");
+  teamSel.value = state.team;
+  document.getElementById('teamCount').textContent = `${teams.length} team(s) in range`;
+}
+
+function refreshGameOptions(){
+  const games = filteredGames();
+  const gameSel = document.getElementById('gameInput');
+  gameSel.innerHTML = ['All', ...games].map(g=>
+    `<option value="${g}">${g==='All'?'All':g.replace(/\s*\(.*\)$/,'')}</option>`).join('');
+  state.games = ['All'];
+  [...gameSel.options].forEach(o=>{ o.selected = o.value==='All'; });
+}
+
+// Toggles the sidebar between the per-pitcher selector (Scouting Report) and
+// the team selector (Cheat Sheet) based on which Scout sub-tab is active.
+function syncSidebarForTab(){
+  const isCheatSheet = state.mode === 'scout' && activeTab === 'cheatsheet';
+  document.getElementById('playerLabel').style.display = isCheatSheet ? 'none' : '';
+  document.getElementById('playerInput').style.display = isCheatSheet ? 'none' : '';
+  document.getElementById('playerCount').style.display = isCheatSheet ? 'none' : '';
+  document.getElementById('teamDivider').style.display = isCheatSheet ? '' : 'none';
+  document.getElementById('teamLabel').style.display = isCheatSheet ? '' : 'none';
+  document.getElementById('teamInput').style.display = isCheatSheet ? '' : 'none';
+  if (isCheatSheet) refreshTeamOptions();
+}
 
 function initSidebar(){
   const seasonSel = document.getElementById('seasonInput');
@@ -1620,48 +2027,15 @@ function initSidebar(){
     dateEnd.min = start; dateEnd.max = end; dateEnd.value = end;
   }
 
-  function refreshPlayerOptions(){
-    const players = filteredPlayers();
-    const playerSel = document.getElementById('playerInput');
-    const label = document.getElementById('playerLabel');
-    const noun = state.mode === 'pitching' ? 'Pitcher' : (state.mode === 'scout' ? 'Pitcher' : 'Hitter');
-    label.textContent = noun;
-    const prev = state.player;
-
-    if (state.mode === 'scout'){
-      // No "All" option — a scouting report is always for one specific pitcher.
-      playerSel.innerHTML = players.map(p=>{
-        const [name, team] = p.split('||');
-        return `<option value="${p}">${name} (${team})</option>`;
-      }).join('');
-      state.player = players.includes(prev) ? prev : (players[0] || "");
-      playerSel.value = state.player;
-      document.getElementById('playerCount').textContent = `${players.length} pitcher(s) in range`;
-    } else {
-      playerSel.innerHTML = ['All', ...players].map(p=>`<option value="${p}">${p}</option>`).join('');
-      state.player = players.includes(prev) ? prev : 'All';
-      playerSel.value = state.player;
-      document.getElementById('playerCount').textContent = `${players.length} ${noun.toLowerCase()}(s) in range`;
-    }
-  }
-
-  function refreshGameOptions(){
-    const games = filteredGames();
-    const gameSel = document.getElementById('gameInput');
-    gameSel.innerHTML = ['All', ...games].map(g=>
-      `<option value="${g}">${g==='All'?'All':g.replace(/\s*\(.*\)$/,'')}</option>`).join('');
-    state.games = ['All'];
-    [...gameSel.options].forEach(o=>{ o.selected = o.value==='All'; });
-  }
-
   seasonSel.addEventListener('change', ()=>{
     state.season = seasonSel.value;
-    applySeason(); refreshPlayerOptions(); refreshGameOptions(); renderAll();
+    applySeason(); refreshPlayerOptions(); refreshGameOptions(); syncSidebarForTab(); renderAll();
   });
-  dateStart.addEventListener('change', ()=>{ state.dateStart = dateStart.value; refreshPlayerOptions(); refreshGameOptions(); renderAll(); });
-  dateEnd.addEventListener('change', ()=>{ state.dateEnd = dateEnd.value; refreshPlayerOptions(); refreshGameOptions(); renderAll(); });
+  dateStart.addEventListener('change', ()=>{ state.dateStart = dateStart.value; refreshPlayerOptions(); refreshGameOptions(); syncSidebarForTab(); renderAll(); });
+  dateEnd.addEventListener('change', ()=>{ state.dateEnd = dateEnd.value; refreshPlayerOptions(); refreshGameOptions(); syncSidebarForTab(); renderAll(); });
 
   document.getElementById('playerInput').addEventListener('change', e=>{ state.player = e.target.value; renderAll(); });
+  document.getElementById('teamInput').addEventListener('change', e=>{ state.team = e.target.value; renderAll(); });
   document.getElementById('gameInput').addEventListener('change', e=>{
     const selected = [...e.target.selectedOptions].map(o=>o.value);
     state.games = selected.length ? selected : ['All'];
@@ -1671,6 +2045,7 @@ function initSidebar(){
   applySeason();
   refreshPlayerOptions();
   refreshGameOptions();
+  syncSidebarForTab();
 }
 
 /* ============================================================
@@ -1695,6 +2070,7 @@ function renderAll(){
     }
   } else if (state.mode === 'scout'){
     if (activeTab === 'scoutreport') renderScoutReport(rows);
+    else if (activeTab === 'cheatsheet') renderCheatSheet(teamData());
   } else {
     switch(activeTab){
       case 'traditional': renderTraditional(rows); break;
