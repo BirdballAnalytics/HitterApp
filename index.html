@@ -97,17 +97,9 @@
   /* -- Scout report layout -- */
   .scout-header-row{display:flex;justify-content:space-between;align-items:center;gap:12px;}
   .scout-top-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;align-items:start;}
-  .scout-top-grid-3{display:grid;grid-template-columns:1.1fr 1fr 0.85fr;gap:14px;align-items:start;}
-  .scout-dmg-row{display:flex;gap:10px;justify-content:center;}
-  .dmg-card{background:#10141a;border-radius:10px;padding:10px 14px 12px;flex:1;}
-  .dmg-title{color:#93a0b0;font-size:14px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
-    text-align:center;padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,.09);}
-  .dmg-grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;
-    width:96px;height:96px;margin:0 auto;border:1px solid #545b66;}
-  .dmg-cell{border:1px solid #333a44;}
-  .dmg-cell.dmg-hi{background:#2c6b45;}
+  .scout-top-grid-2{display:grid;grid-template-columns:0.62fr 1fr;gap:14px;align-items:start;}
   .scout-heat-grid .chart-box{padding:3px;}
-  @media (max-width:900px){.scout-top-grid{grid-template-columns:1fr;} .scout-top-grid-3{grid-template-columns:1fr;}}
+  @media (max-width:900px){.scout-top-grid{grid-template-columns:1fr;} .scout-top-grid-2{grid-template-columns:1fr;}}
 
   /* ── Tables ── */
   table.stat-table{border-collapse:collapse;width:100%;font-size:12.5px;background:#fff;margin-bottom:6px;}
@@ -199,11 +191,7 @@
     table.stat-table{ font-size:7px; }
     table.stat-table th, table.stat-table td{ padding:2px 4px; }
     .scout-top-grid{ grid-template-columns:1.3fr 1fr; gap:8px; }
-    .scout-top-grid-3{ grid-template-columns:1.1fr 1fr 0.85fr; gap:8px; }
-    .scout-dmg-row{ gap:5px; }
-    .dmg-card{ padding:5px 6px 6px; }
-    .dmg-title{ font-size:9px; padding-bottom:3px; margin-bottom:4px; }
-    .dmg-grid{ width:64px; height:64px; }
+    .scout-top-grid-2{ grid-template-columns:0.62fr 1fr; gap:8px; }
     .scout-heat-grid{ gap:4px; }
     .chart-box{ border:1px solid #ddd; padding:2px; break-inside:avoid; }
     .grid{ gap:4px; }
