@@ -94,6 +94,12 @@
   .chart-box{background:#fff;border:1px solid #eae6dd;border-radius:6px;padding:6px;}
   .chart-title{font-size:11px;font-weight:700;text-align:center;color:#333;padding:6px 0 0 0;}
 
+  /* -- Scout report layout -- */
+  .scout-header-row{display:flex;justify-content:space-between;align-items:center;gap:12px;}
+  .scout-top-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;align-items:start;}
+  .scout-heat-grid .chart-box{padding:3px;}
+  @media (max-width:900px){.scout-top-grid{grid-template-columns:1fr;}}
+
   /* ── Tables ── */
   table.stat-table{border-collapse:collapse;width:100%;font-size:12.5px;background:#fff;margin-bottom:6px;}
   table.stat-table th{
@@ -167,6 +173,26 @@
     text-transform:uppercase;text-decoration:none;margin-top:24px;opacity:.8;cursor:pointer;
   }
   #backToLanding:hover{opacity:1;text-decoration:underline;}
+
+  /* -- One-page PDF export (File > Print / "Download PDF" button) -- */
+  @page{ size: letter; margin: 0.35in; }
+  @media print{
+    @page{ size: letter landscape; margin: 0.3in; }
+    body{ background:#fff; }
+    .header-bar, .sidebar, .tabs-nav, #landingScreen, .no-print{ display:none !important; }
+    .layout, .main{ padding:0; margin:0; min-height:0; }
+    .main{ padding:0 !important; }
+    #tabsContent{ margin:0; }
+    .tab-panel{ display:none !important; }
+    .tab-panel.active{ display:block !important; }
+    .section-label{ font-size:9px; margin:6px 0 4px 0; padding-bottom:2px; }
+    table.stat-table{ font-size:7px; }
+    table.stat-table th, table.stat-table td{ padding:2px 4px; }
+    .scout-top-grid{ grid-template-columns:1.3fr 1fr; gap:8px; }
+    .scout-heat-grid{ gap:4px; }
+    .chart-box{ border:1px solid #ddd; padding:2px; break-inside:avoid; }
+    .grid{ gap:4px; }
+  }
 </style>
 </head>
 <body>
@@ -313,7 +339,7 @@ function filteredPlayers(){
     });
   } else if (state.mode === 'scout'){
     ALL_ROWS.forEach(r=>{
-      if (r.PitcherTeam && r.PitcherTeam!==TEAM && inRange(r.Date,s,e)) set.add(`${r.Pitcher}||${r.PitcherTeam}`);
+      if (r.PitcherTeam && inRange(r.Date,s,e)) set.add(`${r.Pitcher}||${r.PitcherTeam}`);
     });
   } else {
     ALL_ROWS.forEach(r=>{
@@ -550,7 +576,7 @@ function zoneScatter(div, rows, {colorField, colorMap, title, tooltipFn}){
 
 /* Density "heat map" for whiff/chase tabs — mirrors sz_density_plot()
    using Plotly's histogram2dcontour as a stand-in for ggplot's stat_density_2d. */
-function zoneDensity(div, rows, title){
+function zoneDensity(div, rows, title, height=300){
   const x = rows.map(r=>r.PLS), y = rows.map(r=>r.PLH);
   const traces = [{
     type:'histogram2dcontour', x, y,
@@ -559,11 +585,11 @@ function zoneDensity(div, rows, title){
     ncontours: 12
   }];
   const layout = {
-    title:{text:`${title} (n=${rows.length})`, font:{size:11}},
+    title:{text:`${title} (n=${rows.length})`, font:{size:height<250?9:11}},
     xaxis:{title:'', range:[-2,2], zeroline:false, showticklabels:false},
     yaxis:{title:'', range:[0,4], zeroline:false, showticklabels:false, scaleanchor:'x'},
     shapes: zoneShapes(),
-    margin:{l:8,r:8,t:28,b:8}, height:300, showlegend:false,
+    margin:{l:6,r:6,t:24,b:6}, height, showlegend:false,
     plot_bgcolor:'#fff'
   };
   Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
@@ -898,7 +924,7 @@ const fmt2 = v => (v===null||v===undefined||Number.isNaN(v)) ? "-" : v.toFixed(2
 
 /* Generic (non strike-zone) XY scatter with a crosshair through the origin —
    used for Movement / Release / Extension charts. */
-function xyScatter(div, rows, {xField, yField, xRange, yRange, colorField, colorMap, title, xLabel, yLabel, tooltipFn}){
+function xyScatter(div, rows, {xField, yField, xRange, yRange, colorField, colorMap, title, xLabel, yLabel, tooltipFn, height=360}){
   const cats = [...new Set(rows.map(r=>r[colorField]).filter(v=>v!=null))].sort();
   const traces = cats.map(cat=>{
     const sub = rows.filter(r=>r[colorField]===cat);
@@ -906,7 +932,7 @@ function xyScatter(div, rows, {xField, yField, xRange, yRange, colorField, color
       type:'scatter', mode:'markers', name:cat,
       x: sub.map(r=>r[xField]), y: sub.map(r=>r[yField]),
       text: sub.map(tooltipFn), hovertemplate:'%{text}<extra></extra>',
-      marker:{ color:(colorMap&&colorMap[cat])||'#888', size:8, opacity:0.85 }
+      marker:{ color:(colorMap&&colorMap[cat])||'#888', size:height<300?5:8, opacity:0.85 }
     };
   });
   const layout = {
@@ -914,7 +940,7 @@ function xyScatter(div, rows, {xField, yField, xRange, yRange, colorField, color
     xaxis:{title:xLabel, range:xRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
     yaxis:{title:yLabel, range:yRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
     legend:{orientation:'h', y:-0.2, font:{size:9}},
-    margin:{l:50,r:10,t:34,b:44}, height:360
+    margin:{l:44,r:8,t:30,b:36}, height
   };
   Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
 }
@@ -1479,7 +1505,7 @@ function scoutMetricsRow(rows){
 function renderScoutReport(rows){
   const panel = document.getElementById('panel-scoutreport');
   if (!state.player){
-    panel.innerHTML = `<div class="empty-msg">No opposing pitchers found in this date range.</div>`;
+    panel.innerHTML = `<div class="empty-msg">No pitchers found in this date range.</div>`;
     return;
   }
   if (!rows.length){
@@ -1491,39 +1517,44 @@ function renderScoutReport(rows){
   const games = new Set(rows.map(r=>r.Game)).size;
 
   panel.innerHTML = `
-    <div class="section-label" style="font-size:13px;color:#333;border:none;margin-top:0;">
-      ${pName} <span style="color:#999;font-weight:400;">— ${pTeam} — Throws ${throws} — ${rows.length} pitches across ${games} game(s)</span>
+    <div class="scout-header-row">
+      <div class="section-label" style="font-size:13px;color:#333;border:none;margin-top:0;">
+        ${pName} <span style="color:#999;font-weight:400;">— ${pTeam} — Throws ${throws} — ${rows.length} pitches across ${games} game(s)</span>
+      </div>
+      <button id="scoutPrintBtn" class="spray-btn no-print" type="button">Download PDF</button>
     </div>
 
-    <div class="section-label">Traditional Stats</div>
-    <div id="scout-summary"></div>
-    <div id="scout-bypitch" style="margin-top:6px;"></div>
+    <div class="scout-top-grid">
+      <div class="scout-tables-col">
+        <div class="section-label" style="margin-top:0;">Traditional Stats</div>
+        <div id="scout-summary"></div>
+        <div id="scout-bypitch" style="margin-top:4px;"></div>
+        <div class="section-label" style="margin-top:10px;">Metrics</div>
+        <div id="scout-metrics"></div>
+      </div>
+      <div class="scout-plot-col">
+        <div class="section-label" style="margin-top:0;">Pitch Plot</div>
+        <div class="chart-box"><div id="scout-pitchplot"></div></div>
+      </div>
+    </div>
 
-    <div class="section-label chart-row">Pitch Plot</div>
-    <div class="chart-box" style="max-width:640px;"><div id="scout-pitchplot"></div></div>
-
-    <div class="section-label chart-row">Metrics</div>
-    <div id="scout-metrics"></div>
-
-    <div class="section-label chart-row">Locations — Right-Handed Hitters</div>
-    <div class="grid grid-3">
+    <div class="section-label chart-row">Right-Handed Hitters — Locations &amp; Damage</div>
+    <div class="grid grid-4 scout-heat-grid">
       <div class="chart-box"><div id="scout-rhh-fb"></div></div>
       <div class="chart-box"><div id="scout-rhh-bb"></div></div>
       <div class="chart-box"><div id="scout-rhh-ch"></div></div>
+      <div class="chart-box"><div id="scout-dmg-rhh"></div></div>
     </div>
 
-    <div class="section-label chart-row">Locations — Left-Handed Hitters</div>
-    <div class="grid grid-3">
+    <div class="section-label chart-row">Left-Handed Hitters — Locations &amp; Damage</div>
+    <div class="grid grid-4 scout-heat-grid">
       <div class="chart-box"><div id="scout-lhh-fb"></div></div>
       <div class="chart-box"><div id="scout-lhh-bb"></div></div>
       <div class="chart-box"><div id="scout-lhh-ch"></div></div>
-    </div>
-
-    <div class="section-label chart-row">Damage Allowed</div>
-    <div class="grid grid-3">
-      <div class="chart-box"><div id="scout-dmg-rhh"></div></div>
       <div class="chart-box"><div id="scout-dmg-lhh"></div></div>
     </div>`;
+
+  document.getElementById('scoutPrintBtn').addEventListener('click', ()=>window.print());
 
   renderTable(document.getElementById('scout-summary'), pitchingSummary(rows), {rateCols:['BAA','SLG','WHIP','FIP']});
   const byPitch = groupBy(rows, r=>r.Pitch);
@@ -1535,25 +1566,24 @@ function renderScoutReport(rows){
   xyScatter(document.getElementById('scout-pitchplot'), rows, {
     xField:'HB', yField:'IVB', xRange:[-30,30], yRange:[-30,30],
     colorField:'Pitch', colorMap:PITCH_COLORS, title:'Pitch Shapes',
-    xLabel:'Horizontal Break', yLabel:'Induced Vertical Break', tooltipFn:tipM
+    xLabel:'Horizontal Break', yLabel:'Induced Vertical Break', tooltipFn:tipM, height:270
   });
 
   renderTable(document.getElementById('scout-metrics'),
     sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...scoutMetricsRow(byPitch.get(p))})));
 
   const isCH = r => r.Pitch === 'ChangeUp' || r.Pitch === 'Changeup';
-  const draw = (id, side, filterFn, title) => zoneDensity(document.getElementById(id),
-    rows.filter(r=>r.BatterSide===side && filterFn(r)), title);
-  draw('scout-rhh-fb', 'Right', r=>r.FBc, 'RHH — Fastballs');
-  draw('scout-rhh-bb', 'Right', r=>r.BBc, 'RHH — Breaking Balls');
-  draw('scout-rhh-ch', 'Right', isCH,     'RHH — Changeups');
-  draw('scout-lhh-fb', 'Left',  r=>r.FBc, 'LHH — Fastballs');
-  draw('scout-lhh-bb', 'Left',  r=>r.BBc, 'LHH — Breaking Balls');
-  draw('scout-lhh-ch', 'Left',  isCH,     'LHH — Changeups');
-
   const isDamage = r => r.InPlay && (r.H===1 || r.HardHit===1);
-  zoneDensity(document.getElementById('scout-dmg-rhh'), rows.filter(r=>r.BatterSide==='Right' && isDamage(r)), 'Damage vs RHH');
-  zoneDensity(document.getElementById('scout-dmg-lhh'), rows.filter(r=>r.BatterSide==='Left' && isDamage(r)), 'Damage vs LHH');
+  const draw = (id, side, filterFn, title) => zoneDensity(document.getElementById(id),
+    rows.filter(r=>r.BatterSide===side && filterFn(r)), title, 190);
+  draw('scout-rhh-fb', 'Right', r=>r.FBc, 'FB');
+  draw('scout-rhh-bb', 'Right', r=>r.BBc, 'BB');
+  draw('scout-rhh-ch', 'Right', isCH,     'CH');
+  draw('scout-dmg-rhh','Right', isDamage, 'Damage');
+  draw('scout-lhh-fb', 'Left',  r=>r.FBc, 'FB');
+  draw('scout-lhh-bb', 'Left',  r=>r.BBc, 'BB');
+  draw('scout-lhh-ch', 'Left',  isCH,     'CH');
+  draw('scout-dmg-lhh','Left',  isDamage, 'Damage');
 }
 
 
@@ -1578,7 +1608,7 @@ function initSidebar(){
     const players = filteredPlayers();
     const playerSel = document.getElementById('playerInput');
     const label = document.getElementById('playerLabel');
-    const noun = state.mode === 'pitching' ? 'Pitcher' : (state.mode === 'scout' ? 'Opposing Pitcher' : 'Hitter');
+    const noun = state.mode === 'pitching' ? 'Pitcher' : (state.mode === 'scout' ? 'Pitcher' : 'Hitter');
     label.textContent = noun;
     const prev = state.player;
 
@@ -1590,7 +1620,7 @@ function initSidebar(){
       }).join('');
       state.player = players.includes(prev) ? prev : (players[0] || "");
       playerSel.value = state.player;
-      document.getElementById('playerCount').textContent = `${players.length} opposing pitcher(s) in range`;
+      document.getElementById('playerCount').textContent = `${players.length} pitcher(s) in range`;
     } else {
       playerSel.innerHTML = ['All', ...players].map(p=>`<option value="${p}">${p}</option>`).join('');
       state.player = players.includes(prev) ? prev : 'All';
@@ -1687,6 +1717,16 @@ function backToLanding(){
 document.getElementById('tileHitting').addEventListener('click', ()=>enterMode('hitting'));
 document.getElementById('tilePitching').addEventListener('click', ()=>enterMode('pitching'));
 document.getElementById('tileScout').addEventListener('click', ()=>enterMode('scout'));
+
+// Plotly draws to a fixed pixel size at render time. Print CSS shrinks the
+// scout report's containers for one-page layout, so force a resize right
+// before the browser paints the print output, or charts would clip/overflow.
+window.addEventListener('beforeprint', ()=>{
+  if (state.mode !== 'scout') return;
+  document.querySelectorAll('#panel-scoutreport [id^="scout-"]').forEach(div=>{
+    if (div.dataset && window.Plotly && div._fullLayout) window.Plotly.Plots.resize(div);
+  });
+});
 document.getElementById('backToLanding').addEventListener('click', backToLanding);
 
 </script>
