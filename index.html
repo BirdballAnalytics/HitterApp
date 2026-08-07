@@ -97,8 +97,17 @@
   /* -- Scout report layout -- */
   .scout-header-row{display:flex;justify-content:space-between;align-items:center;gap:12px;}
   .scout-top-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;align-items:start;}
+  .scout-top-grid-3{display:grid;grid-template-columns:1.1fr 1fr 0.85fr;gap:14px;align-items:start;}
+  .scout-dmg-row{display:flex;gap:10px;justify-content:center;}
+  .dmg-card{background:#10141a;border-radius:10px;padding:10px 14px 12px;flex:1;}
+  .dmg-title{color:#93a0b0;font-size:14px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    text-align:center;padding-bottom:7px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,.09);}
+  .dmg-grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;
+    width:96px;height:96px;margin:0 auto;border:1px solid #545b66;}
+  .dmg-cell{border:1px solid #333a44;}
+  .dmg-cell.dmg-hi{background:#2c6b45;}
   .scout-heat-grid .chart-box{padding:3px;}
-  @media (max-width:900px){.scout-top-grid{grid-template-columns:1fr;}}
+  @media (max-width:900px){.scout-top-grid{grid-template-columns:1fr;} .scout-top-grid-3{grid-template-columns:1fr;}}
 
   /* ── Tables ── */
   table.stat-table{border-collapse:collapse;width:100%;font-size:12.5px;background:#fff;margin-bottom:6px;}
@@ -179,6 +188,7 @@
   @media print{
     @page{ size: letter landscape; margin: 0.3in; }
     body{ background:#fff; }
+    *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     .header-bar, .sidebar, .tabs-nav, #landingScreen, .no-print{ display:none !important; }
     .layout, .main{ padding:0; margin:0; min-height:0; }
     .main{ padding:0 !important; }
@@ -189,6 +199,11 @@
     table.stat-table{ font-size:7px; }
     table.stat-table th, table.stat-table td{ padding:2px 4px; }
     .scout-top-grid{ grid-template-columns:1.3fr 1fr; gap:8px; }
+    .scout-top-grid-3{ grid-template-columns:1.1fr 1fr 0.85fr; gap:8px; }
+    .scout-dmg-row{ gap:5px; }
+    .dmg-card{ padding:5px 6px 6px; }
+    .dmg-title{ font-size:9px; padding-bottom:3px; margin-bottom:4px; }
+    .dmg-grid{ width:64px; height:64px; }
     .scout-heat-grid{ gap:4px; }
     .chart-box{ border:1px solid #ddd; padding:2px; break-inside:avoid; }
     .grid{ gap:4px; }
@@ -865,7 +880,7 @@ function renderContactPlot(div, rows){
 /* ============================================================
    PITCHING STATS HELPERS (mirror app.R server logic)
    ============================================================ */
-function pitchingSummary(rows){
+function pitchingSummary(rows, games){
   const PC = rows.length;
   const IPraw = (sum(rows,r=>r.OutsOnPlay) + sum(rows,r=>r.SO)) / 3;
   const thirds = IPraw % 1;
@@ -877,11 +892,19 @@ function pitchingSummary(rows){
   const SO = sum(rows,r=>r.SO), HBP = sum(rows,r=>r.HBP);
   const BB = Math.max(sum(rows,r=>r.BB) - HBP, 0);
   const AB = sum(rows,r=>r.AB);
+  const R = Math.round(sum(rows,r=>r.RunsScored));
   const WHIP = IP ? (BB+H)/IP : NaN;
   const FIP = IP ? (((hr*13)+(3*(BB+HBP))-(2*SO))/IP + 3.76) : NaN;
   const BAA = AB ? H/AB : NaN;
   const SLG = AB ? TB/AB : NaN;
-  return { IP: fmt1(IP), PC, BF, H, BB, HBP, SO, BAA:fmt3(BAA), SLG:fmt3(SLG), WHIP:fmt2(WHIP), FIP:fmt2(FIP) };
+  const out = {};
+  if (games!==undefined) out.G = games;
+  Object.assign(out, {
+    IP: fmt1(IP), P:PC, BF, H, R, BB, HBP, SO, HR:hr,
+    "K%": pct1(BF? SO/BF : NaN), "BB%": pct1(BF? BB/BF : NaN),
+    BAA:fmt3(BAA), SLG:fmt3(SLG), WHIP:fmt2(WHIP), FIP:fmt2(FIP)
+  });
+  return out;
 }
 
 function pitchingByPitchStats(rows){
@@ -1279,7 +1302,7 @@ function renderPitchingResults(rows){
   panel.innerHTML = `
     <div class="section-label">Summary</div><div id="pr-summary"></div>
     <div class="section-label chart-row">By Pitch</div><div id="pr-bypitch"></div>`;
-  renderTable(document.getElementById('pr-summary'), pitchingSummary(rows), {rateCols:['BAA','SLG','WHIP','FIP']});
+  renderTable(document.getElementById('pr-summary'), pitchingSummary(rows), {rateCols:['BAA','SLG','WHIP','FIP'], pctCols:['K%','BB%']});
   const byPitch = groupBy(rows, r=>r.Pitch);
   renderTable(document.getElementById('pr-bypitch'),
     sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...pitchingByPitchStats(byPitch.get(p))})),
@@ -1490,11 +1513,11 @@ function renderStrikeOverTime(rows){
 
 function scoutMetricsRow(rows){
   return {
-    Pitches: rows.length,
-    "Avg Velo": fmt1(mean(rows,r=>r.RelSpeed)), "Max Velo": fmt1(maxOf(rows,r=>r.RelSpeed)),
-    "Avg Spin": fmt0(mean(rows,r=>r.SpinRate)), "Max Spin": fmt0(maxOf(rows,r=>r.SpinRate)),
-    IVB: fmt1(mean(rows,r=>r.IVB)), HB: fmt1(mean(rows,r=>r.HB)),
-    "Rel Height": fmt1(mean(rows,r=>r.RelHeight)), Extension: fmt1(mean(rows,r=>r.Extension)),
+    P: rows.length,
+    Vel: fmt1(mean(rows,r=>r.RelSpeed)), MxVel: fmt1(maxOf(rows,r=>r.RelSpeed)),
+    Spin: fmt0(mean(rows,r=>r.SpinRate)), MxSpin: fmt0(maxOf(rows,r=>r.SpinRate)),
+    IVB: fmt1(mean(rows,r=>r.IVB)), HZB: fmt1(mean(rows,r=>r.HB)),
+    EXT: fmt1(mean(rows,r=>r.Extension)), "Rel H": fmt1(mean(rows,r=>r.RelHeight)),
     VAA: fmt1(mean(rows,r=>r.VAA)), HAA: fmt1(mean(rows,r=>r.HAA)),
   };
 }
@@ -1502,6 +1525,38 @@ function scoutMetricsRow(rows){
 /* ── Scout Tab: one-page opposing pitcher scouting report ──
    "Damage" is defined here as any batted ball that was either a hit or
    hit hard (95+ EV) — i.e. locations where this pitcher has gotten burned. */
+/* Simple 2x2 strike-zone quadrant chart, catcher's-eye view, no axis labels.
+   The quadrant with the highest "damage" rate (hits or 95+ EV, among pitches
+   located in that quadrant) is highlighted green — read as "this is where a
+   hitter should expect to do damage against this pitcher." No interpretation
+   reference image was provided, so this is a best-guess design; happy to
+   restyle once you can share the exact chart you have in mind. */
+function renderDamageQuadrant(div, rows, sideLabel){
+  const midY = (1.755 + 3.378) / 2;
+  const xMin=-1.1, xMax=1.1, yMin=1.0, yMax=4.15;
+  const totals = {ul:0, ur:0, dl:0, dr:0};
+  const dmg = {ul:0, ur:0, dl:0, dr:0};
+  rows.forEach(r=>{
+    if (r.PLS==null || r.PLH==null) return;
+    if (r.PLS<xMin || r.PLS>xMax || r.PLH<yMin || r.PLH>yMax) return;
+    const key = (r.PLH>=midY ? 'u':'d') + (r.PLS<0 ? 'l':'r');
+    totals[key]++;
+    if (r.InPlay && (r.H===1 || r.HardHit===1)) dmg[key]++;
+  });
+  const rate = {};
+  Object.keys(totals).forEach(k=> rate[k] = totals[k] ? dmg[k]/totals[k] : -1);
+  const best = Object.keys(rate).reduce((a,b)=> rate[b]>rate[a] ? b : a, 'ul');
+
+  const cell = key => `<div class="dmg-cell${key===best?' dmg-hi':''}"></div>`;
+  div.innerHTML = `
+    <div class="dmg-card">
+      <div class="dmg-title">${sideLabel}</div>
+      <div class="dmg-grid">
+        ${cell('ul')}${cell('ur')}${cell('dl')}${cell('dr')}
+      </div>
+    </div>`;
+}
+
 function renderScoutReport(rows){
   const panel = document.getElementById('panel-scoutreport');
   if (!state.player){
@@ -1519,55 +1574,62 @@ function renderScoutReport(rows){
   panel.innerHTML = `
     <div class="scout-header-row">
       <div class="section-label" style="font-size:13px;color:#333;border:none;margin-top:0;">
-        ${pName} <span style="color:#999;font-weight:400;">— ${pTeam} — Throws ${throws} — ${rows.length} pitches across ${games} game(s)</span>
+        ${pName} <span style="color:#999;font-weight:400;">(${throws}) — ${pTeam}</span>
       </div>
       <button id="scoutPrintBtn" class="spray-btn no-print" type="button">Download PDF</button>
     </div>
 
-    <div class="scout-top-grid">
-      <div class="scout-tables-col">
-        <div class="section-label" style="margin-top:0;">Traditional Stats</div>
+    <div class="scout-top-grid-3">
+      <div>
+        <div class="section-label" style="margin-top:0;">Season Stats</div>
         <div id="scout-summary"></div>
-        <div id="scout-bypitch" style="margin-top:4px;"></div>
-        <div class="section-label" style="margin-top:10px;">Metrics</div>
-        <div id="scout-metrics"></div>
       </div>
-      <div class="scout-plot-col">
-        <div class="section-label" style="margin-top:0;">Pitch Plot</div>
+      <div>
+        <div class="section-label" style="margin-top:0;">Pitch Break Chart</div>
         <div class="chart-box"><div id="scout-pitchplot"></div></div>
       </div>
+      <div>
+        <div class="section-label" style="margin-top:0;">Damage Zone</div>
+        <div class="scout-dmg-row">
+          <div id="scout-dmg-lhh-zone"></div>
+          <div id="scout-dmg-rhh-zone"></div>
+        </div>
+      </div>
     </div>
 
-    <div class="section-label chart-row">Right-Handed Hitters — Locations &amp; Damage</div>
-    <div class="grid grid-4 scout-heat-grid">
-      <div class="chart-box"><div id="scout-rhh-fb"></div></div>
-      <div class="chart-box"><div id="scout-rhh-bb"></div></div>
-      <div class="chart-box"><div id="scout-rhh-ch"></div></div>
-      <div class="chart-box"><div id="scout-dmg-rhh"></div></div>
-    </div>
+    <div class="section-label chart-row">TrackMan Data</div>
+    <div id="scout-metrics"></div>
 
-    <div class="section-label chart-row">Left-Handed Hitters — Locations &amp; Damage</div>
+    <div class="section-label chart-row">Left-Handed Hitters</div>
     <div class="grid grid-4 scout-heat-grid">
       <div class="chart-box"><div id="scout-lhh-fb"></div></div>
       <div class="chart-box"><div id="scout-lhh-bb"></div></div>
       <div class="chart-box"><div id="scout-lhh-ch"></div></div>
       <div class="chart-box"><div id="scout-dmg-lhh"></div></div>
+    </div>
+
+    <div class="section-label chart-row">Right-Handed Hitters</div>
+    <div class="grid grid-4 scout-heat-grid">
+      <div class="chart-box"><div id="scout-rhh-fb"></div></div>
+      <div class="chart-box"><div id="scout-rhh-bb"></div></div>
+      <div class="chart-box"><div id="scout-rhh-ch"></div></div>
+      <div class="chart-box"><div id="scout-dmg-rhh"></div></div>
     </div>`;
 
   document.getElementById('scoutPrintBtn').addEventListener('click', ()=>window.print());
 
-  renderTable(document.getElementById('scout-summary'), pitchingSummary(rows), {rateCols:['BAA','SLG','WHIP','FIP']});
-  const byPitch = groupBy(rows, r=>r.Pitch);
-  renderTable(document.getElementById('scout-bypitch'),
-    sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...pitchingByPitchStats(byPitch.get(p))})),
-    {pctCols:['IZ %','Swing%','Z-Take%','Whiff%','Chase%','Contact%','Barrel%','GB%','FB%','LD%']});
+  renderTable(document.getElementById('scout-summary'), pitchingSummary(rows, games), {rateCols:['BAA','SLG','WHIP','FIP'], pctCols:['K%','BB%']});
 
+  const byPitch = groupBy(rows, r=>r.Pitch);
   const tipM = r => `Pitch: ${r.Pitch}<br>HB: ${fmt1(r.HB)}  IVB: ${fmt1(r.IVB)}`;
   xyScatter(document.getElementById('scout-pitchplot'), rows, {
     xField:'HB', yField:'IVB', xRange:[-30,30], yRange:[-30,30],
-    colorField:'Pitch', colorMap:PITCH_COLORS, title:'Pitch Shapes',
-    xLabel:'Horizontal Break', yLabel:'Induced Vertical Break', tooltipFn:tipM, height:270
+    colorField:'Pitch', colorMap:PITCH_COLORS, title:'',
+    xLabel:'Horizontal Break', yLabel:'Induced Vertical Break', tooltipFn:tipM, height:230
   });
+
+  renderDamageQuadrant(document.getElementById('scout-dmg-lhh-zone'), rows.filter(r=>r.BatterSide==='Left'), 'LHH');
+  renderDamageQuadrant(document.getElementById('scout-dmg-rhh-zone'), rows.filter(r=>r.BatterSide==='Right'), 'RHH');
 
   renderTable(document.getElementById('scout-metrics'),
     sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...scoutMetricsRow(byPitch.get(p))})));
