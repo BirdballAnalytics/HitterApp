@@ -631,10 +631,11 @@ function zoneShapes(dark=false){
    Mirrors sz_ggplot(). */
 function zoneScatter(div, rows, {colorField, colorMap, title, tooltipFn}){
   const cats = [...new Set(rows.map(r=>r[colorField]).filter(v=>v!==null && v!==undefined))].sort();
+  const isPitchField = colorField === 'Pitch';
   const traces = cats.map(cat=>{
     const sub = rows.filter(r=>r[colorField]===cat);
     return {
-      type:'scatter', mode:'markers', name: cat,
+      type:'scatter', mode:'markers', name: isPitchField ? (PITCH_ABBR[cat]||cat) : cat,
       x: sub.map(r=>r.PLS), y: sub.map(r=>r.PLH),
       text: sub.map(tooltipFn),
       hovertemplate: '%{text}<extra></extra>',
@@ -643,11 +644,11 @@ function zoneScatter(div, rows, {colorField, colorMap, title, tooltipFn}){
   });
   const layout = {
     title:{text:title, font:{size:12}},
-    xaxis:{title:'Horizontal Location', range:[-2,2], zeroline:false},
-    yaxis:{title:'Vertical Location', range:[0,5], zeroline:false, scaleanchor:'x'},
+    xaxis:{title:{text:'Horizontal Location', font:{size:10}}, range:[-2,2], zeroline:false},
+    yaxis:{title:{text:'Vertical Location', font:{size:10}}, range:[0,5], zeroline:false, scaleanchor:'x'},
     shapes: zoneShapes(),
-    legend:{orientation:'h', y:-0.18, font:{size:9}},
-    margin:{l:45,r:10,t:34,b:34}, height:300
+    legend:{orientation:'h', y:-0.22, font:{size:9}, itemwidth:30},
+    margin:{l:45,r:10,t:34,b:46}, height:320
   };
   Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
 }
@@ -664,12 +665,14 @@ function zoneDensity(div, rows, title, height=300, dark=false){
     showscale:false, contours:{coloring:'fill', showlines:false},
     ncontours: 12
   }];
+  const hasTitle = !!title;
+  const topMargin = hasTitle ? (height<250?16:24) : Math.min(6, Math.round(height*0.08));
   const layout = {
-    title:{text:`${title}${dark?'':` (n=${rows.length})`}`, font:{size:height<250?9:11, color: dark?'#93a0b0':undefined}},
+    title: hasTitle ? {text:`${title}${dark?'':` (n=${rows.length})`}`, font:{size:height<250?9:11, color: dark?'#93a0b0':undefined}} : undefined,
     xaxis:{title:'', range:[-2,2], zeroline:false, showticklabels:false},
     yaxis:{title:'', range:[0,4], zeroline:false, showticklabels:false, scaleanchor:'x'},
     shapes: zoneShapes(dark),
-    margin:{l:6,r:6,t:dark?16:24,b:6}, height, showlegend:false,
+    margin:{l:4,r:4,t:topMargin,b:4}, height, showlegend:false,
     plot_bgcolor: dark?'#10141a':'#fff', paper_bgcolor: dark?'#10141a':'#fff'
   };
   Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
@@ -1130,21 +1133,23 @@ const fmt2 = v => (v===null||v===undefined||Number.isNaN(v)) ? "-" : v.toFixed(2
    used for Movement / Release / Extension charts. */
 function xyScatter(div, rows, {xField, yField, xRange, yRange, colorField, colorMap, title, xLabel, yLabel, tooltipFn, height=360}){
   const cats = [...new Set(rows.map(r=>r[colorField]).filter(v=>v!=null))].sort();
+  const isPitchField = colorField === 'Pitch';
   const traces = cats.map(cat=>{
     const sub = rows.filter(r=>r[colorField]===cat);
     return {
-      type:'scatter', mode:'markers', name:cat,
+      type:'scatter', mode:'markers', name: isPitchField ? (PITCH_ABBR[cat]||cat) : cat,
       x: sub.map(r=>r[xField]), y: sub.map(r=>r[yField]),
       text: sub.map(tooltipFn), hovertemplate:'%{text}<extra></extra>',
       marker:{ color:(colorMap&&colorMap[cat])||'#888', size:height<300?5:8, opacity:0.85 }
     };
   });
+  const legendRows = Math.ceil(cats.length / 6);
   const layout = {
     title:{text:title, font:{size:12}},
-    xaxis:{title:xLabel, range:xRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
-    yaxis:{title:yLabel, range:yRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
-    legend:{orientation:'h', y:-0.2, font:{size:9}},
-    margin:{l:44,r:8,t:30,b:36}, height
+    xaxis:{title:{text:xLabel, font:{size:10}}, range:xRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
+    yaxis:{title:{text:yLabel, font:{size:10}}, range:yRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
+    legend:{orientation:'h', y:-0.05 - 0.09*legendRows, font:{size:9}, itemwidth:30},
+    margin:{l:44,r:8,t:30,b:38 + 16*legendRows}, height: height + 16*legendRows
   };
   Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
 }
@@ -1654,14 +1659,16 @@ function renderLabBattedBall(rows){
   });
   panel.innerHTML = `<div class="section-label" style="margin-top:0;">Batted Ball Types</div><div id="bb-table"></div>
     <div class="section-label chart-row">Launch Angle Distribution</div>
-    <div class="chart-box"><div id="bb-hist" style="height:340px;"></div></div>`;
+    <div class="chart-box" style="background:#0d1117;border-color:#232a35;"><div id="bb-hist" style="height:340px;"></div></div>`;
   renderTable(document.getElementById('bb-table'), summaryRows, {pctCols:['Pct%','Hard Hit%'], rateCols:['BAA']});
 
   Plotly.newPlot(document.getElementById('bb-hist'), [{
     type:'histogram', x:inPlay.map(r=>r.LA).filter(v=>v!=null),
     marker:{color:'#8C2232'}, nbinsx:30
   }], {
-    xaxis:{title:'Launch Angle (°)'}, yaxis:{title:'Count'},
+    xaxis:{title:{text:'Launch Angle (°)', font:{size:10}}, color:'#8a96a8', gridcolor:'#1e2530'},
+    yaxis:{title:{text:'Count', font:{size:10}}, color:'#8a96a8', gridcolor:'#1e2530'},
+    paper_bgcolor:'#0d1117', plot_bgcolor:'#0d1117', font:{color:'#93a0b0'},
     margin:{l:50,r:20,t:10,b:40}, bargap:0.05
   }, {displayModeBar:false, responsive:true});
 }
@@ -1879,7 +1886,7 @@ function renderPitchingHeatGrid(panelId, rows, kind){
 /* ── Pitching Tab 10: Velo Over Time ── */
 function renderVeloOverTime(rows){
   const panel = document.getElementById('panel-velotime');
-  panel.innerHTML = `<div class="chart-box"><div id="velo-time" style="height:420px;"></div></div>`;
+  panel.innerHTML = `<div class="chart-box"><div id="velo-time" style="height:460px;"></div></div>`;
   const sorted = rows.slice().sort((a,b)=>(a.Date||'').localeCompare(b.Date));
   const maxVelo = maxOf(sorted, r=>r.RelSpeed) || 1;
   const cats = [...new Set(sorted.map(r=>r.Pitch))].sort();
@@ -1888,22 +1895,24 @@ function renderVeloOverTime(rows){
     const idxs = sorted.map((r,i)=>({r,i})).filter(o=>o.r.Pitch===cat);
     const xs = idxs.map(o=>o.i+1);
     const ys = idxs.map(o=> o.r.RelSpeed!=null ? (o.r.RelSpeed/maxVelo)*100 : null);
-    traces.push({ type:'scatter', mode:'markers', name:cat, x:xs, y:ys,
+    traces.push({ type:'scatter', mode:'markers', name:PITCH_ABBR[cat]||cat, x:xs, y:ys,
       marker:{ color:PITCH_COLORS[cat]||'#888', size:7, line:{width:1,color:'#fff'} } });
     traces.push({ type:'scatter', mode:'lines', name:cat+' trend', showlegend:false,
       x:xs, y:rollingTrend(xs,ys), line:{ color:PITCH_COLORS[cat]||'#888', width:2.5 } });
   });
+  const legendRows = Math.ceil(cats.length / 7);
   Plotly.newPlot(document.getElementById('velo-time'), traces, {
     title:{text:'Percentage of Max Velocity', font:{size:13}},
-    xaxis:{title:'Pitch Number'}, yaxis:{title:'% of Max Velocity', range:[50,100]},
-    legend:{orientation:'h', y:-0.2}, margin:{l:50,r:10,t:34,b:60}
+    xaxis:{title:{text:'Pitch Number', font:{size:10}}}, yaxis:{title:{text:'% of Max Velocity', font:{size:10}}, range:[50,100]},
+    legend:{orientation:'h', y:-0.08-0.09*legendRows, font:{size:9}, itemwidth:30},
+    margin:{l:50,r:10,t:34,b:60+16*legendRows}
   }, {displayModeBar:false, responsive:true});
 }
 
 /* ── Pitching Tab 11: Strike% Over Time ── */
 function renderStrikeOverTime(rows){
   const panel = document.getElementById('panel-striketime');
-  panel.innerHTML = `<div class="chart-box"><div id="strike-time" style="height:420px;"></div></div>`;
+  panel.innerHTML = `<div class="chart-box"><div id="strike-time" style="height:460px;"></div></div>`;
   const sorted = rows.slice().sort((a,b)=>(a.Date||'').localeCompare(b.Date));
   const cats = [...new Set(sorted.map(r=>r.Pitch))].sort();
   const traces = [];
@@ -1912,15 +1921,17 @@ function renderStrikeOverTime(rows){
     let strikes = 0;
     const xs = idxs.map(o=>o.i+1);
     const ys = idxs.map((o,j)=>{ if (o.r.Strike) strikes++; return (strikes/(j+1))*100; });
-    traces.push({ type:'scatter', mode:'markers', name:cat, x:xs, y:ys,
+    traces.push({ type:'scatter', mode:'markers', name:PITCH_ABBR[cat]||cat, x:xs, y:ys,
       marker:{ color:PITCH_COLORS[cat]||'#888', size:7, line:{width:1,color:'#fff'} } });
     traces.push({ type:'scatter', mode:'lines', name:cat+' trend', showlegend:false,
       x:xs, y:rollingTrend(xs,ys), line:{ color:PITCH_COLORS[cat]||'#888', width:2.5 } });
   });
+  const legendRows = Math.ceil(cats.length / 7);
   Plotly.newPlot(document.getElementById('strike-time'), traces, {
     title:{text:'Cumulative Strike %', font:{size:13}},
-    xaxis:{title:'Pitch Number'}, yaxis:{title:'Strike %', range:[0,100]},
-    legend:{orientation:'h', y:-0.2}, margin:{l:50,r:10,t:34,b:60}
+    xaxis:{title:{text:'Pitch Number', font:{size:10}}}, yaxis:{title:{text:'Strike %', font:{size:10}}, range:[0,100]},
+    legend:{orientation:'h', y:-0.08-0.09*legendRows, font:{size:9}, itemwidth:30},
+    margin:{l:50,r:10,t:34,b:60+16*legendRows}
   }, {displayModeBar:false, responsive:true});
 }
 
