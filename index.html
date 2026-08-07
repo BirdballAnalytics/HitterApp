@@ -181,6 +181,8 @@
 
   /* ── Contact tab ── */
   #contact-panel{background:var(--dark-bg);border-radius:8px;padding:12px 16px 0 16px;margin-bottom:8px;}
+  #lab-heat-panel{background:var(--dark-bg);border-radius:8px;padding:12px 16px;margin-bottom:8px;}
+  .contact_subtitle{color:#8a96a8;font-size:11px;text-align:center;margin:2px 0 6px 0;letter-spacing:.04em;}
   .contact-btn-row{display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;}
   .contact-btn{background:#1e2530;color:#b0b8c8;border:1px solid #2e3a4a;border-radius:4px;padding:6px 14px;font-size:11px;font-weight:700;letter-spacing:.07em;cursor:pointer;text-transform:uppercase;font-family:inherit;}
   .contact-btn.active,.contact-btn:hover{background:var(--maroon);color:var(--gold);border-color:var(--maroon);}
@@ -270,6 +272,10 @@
     <button class="mode-tile" id="tileScout" type="button">
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16 16 L21 21" stroke-linecap="round"/></svg>
       Scout
+    </button>
+    <button class="mode-tile" id="tileLab" type="button">
+      <svg viewBox="0 0 24 24"><path d="M9 2 L9 9 L4 20 a1.5 1.5 0 0 0 1.5 2 h13 a1.5 1.5 0 0 0 1.5 -2 L15 9 L15 2" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 15 h10" stroke-linecap="round"/></svg>
+      Hitting Lab
     </button>
   </div>
 </div>
@@ -371,7 +377,7 @@ const SEASON_DATE_RANGES = computeSeasonRanges();
    FILTER STATE
    ============================================================ */
 const state = {
-  mode: null,        // 'hitting' | 'pitching' | 'scout'
+  mode: null,        // 'hitting' | 'pitching' | 'scout' | 'lab'
   season: "2026 SPRING",
   dateStart: null,
   dateEnd: null,
@@ -741,7 +747,37 @@ function hitDirectionLabel(rows){
 /* ============================================================
    SPRAY CHART (3D, physics-based arcs) — port of R make_arc()
    ============================================================ */
-const spraySt = { colorBy:'ev', hideDots:false };
+const spraySt = { colorBy:'ev', hideDots:false, camera:'catcher' };
+
+const SPRAY_CAMERAS = {
+  catcher:  { eye:{x:0,   y:-2.0, z:0.6}, center:{x:0,y:0.3,z:-0.1}, up:{x:0,y:0,z:1} },
+  pitcher:  { eye:{x:0,   y:1.8,  z:0.5}, center:{x:0,y:0.3,z:-0.1}, up:{x:0,y:0,z:1} },
+  side:     { eye:{x:-2.2,y:0,    z:0.4}, center:{x:0,y:0.3,z:-0.1}, up:{x:0,y:0,z:1} },
+  overhead: { eye:{x:0,   y:-0.01,z:2.6}, center:{x:0,y:0.3,z:-0.1}, up:{x:0,y:1,z:0} },
+};
+
+// Simplified incoming-pitch trajectory (mound release -> plate crossing),
+// drawn on click alongside the existing batted-ball arc / detail card.
+// Uses the pitcher's actual release height/side/extension where available;
+// the slight extra "sag" term is a stylistic approximation of gravity break,
+// not a physics-accurate recreation of the pitch's real movement profile.
+function makePitchArc(row, n=25){
+  const x0 = row.RelSide  != null ? row.RelSide  : 0;
+  const y0 = 60.5 - (row.Extension != null ? row.Extension : 5.5);
+  const z0 = row.RelHeight!= null ? row.RelHeight: 6;
+  const x1 = row.PLS != null ? row.PLS : 0;
+  const y1 = 0;
+  const z1 = row.PLH != null ? row.PLH : 2.5;
+  const x=[], y=[], z=[];
+  for (let i=0;i<n;i++){
+    const t = i/(n-1);
+    x.push(x0 + (x1-x0)*t);
+    y.push(y0 + (y1-y0)*t);
+    const straightZ = z0 + (z1-z0)*t;
+    z.push(straightZ - 4*t*(1-t)*1.5);
+  }
+  return {x,y,z};
+}
 
 function makeArc(bearingDeg, distFt, laDeg, evMph, n=40){
   const bear = bearingDeg*Math.PI/180, la = laDeg*Math.PI/180;
@@ -810,7 +846,7 @@ function renderSprayChart(div, rows){
   const valid = rows.filter(r=>
     r.Dist!=null && r.Bearing!=null && r.InPlay &&
     !['Undefined','Sacrifice','FieldersChoice'].includes(r.PlayResult) &&
-    r.Angle!=null && r.EV!=null && r.EV>0 && r.Dist>0
+    r.LA!=null && r.EV!=null && r.EV>0 && r.Dist>0
   ).map(r=>{
     const bearRad = r.Bearing*Math.PI/180;
     return { ...r, sx:-Math.sin(bearRad)*r.Dist, sy:Math.cos(bearRad)*r.Dist };
@@ -870,7 +906,7 @@ function renderSprayChart(div, rows){
     paper_bgcolor:'#0d1117',
     scene:{
       bgcolor:'#0d1117',
-      camera:{ eye:{x:-0.3,y:-1.8,z:0.7}, center:{x:0,y:0.3,z:-0.1}, up:{x:0,y:0,z:1} },
+      camera: SPRAY_CAMERAS[spraySt.camera] || SPRAY_CAMERAS.catcher,
       xaxis:{title:'', showgrid:false, zeroline:false, showticklabels:false, showbackground:false},
       yaxis:{title:'', showgrid:false, zeroline:false, showticklabels:false, showbackground:false},
       zaxis:{title:'Height (ft)', color:'#8a96a8', showgrid:true, gridcolor:'#1a2230',
@@ -889,6 +925,7 @@ function renderSprayChart(div, rows){
     modeBarButtonsToRemove:['toImage','sendDataToCloud','autoScale2d','resetScale2d']});
 
   const card = document.getElementById('spray_stat_card');
+  let pitchArcAdded = false;
   div.on('plotly_click', (ev)=>{
     const pt = ev.points[0];
     if (pt.data.customdata===undefined && !pt.data.name) return;
@@ -908,8 +945,21 @@ function renderSprayChart(div, rows){
       <div class="card-row"><span class="card-label">Count</span><span class="card-value">${row.Balls}-${row.Strikes}</span></div>
       <div class="card-row"><span class="card-label">Date</span><span class="card-value">${row.Date}</span></div>`;
     card.style.display='block';
+
+    // Add the incoming-pitch trajectory without a full redraw, so the
+    // user's current camera orbit position is preserved.
+    if (pitchArcAdded) window.Plotly.deleteTraces(div, [traces.length]);
+    const arc = makePitchArc(row);
+    window.Plotly.addTraces(div, {
+      type:'scatter3d', mode:'lines', x:arc.x, y:arc.y, z:arc.z,
+      line:{color:'#ff3b30', width:5}, showlegend:false, hoverinfo:'skip'
+    });
+    pitchArcAdded = true;
   });
-  div.on('plotly_doubleclick', ()=>{ card.style.display='none'; });
+  div.on('plotly_doubleclick', ()=>{
+    card.style.display='none';
+    if (pitchArcAdded){ window.Plotly.deleteTraces(div, [traces.length]); pitchArcAdded=false; }
+  });
 }
 
 /* ============================================================
@@ -1111,7 +1161,6 @@ function rollingTrend(xs, ys, window=15){
 
 const TABS_HITTING = [
   {id:'traditional', label:'Traditional Stats'},
-  {id:'spray', label:'Spray Chart'},
   {id:'advanced', label:'Advanced Stats'},
   {id:'evstats', label:'Exit Velo Stats'},
   {id:'evcharts', label:'Exit Velo Charts'},
@@ -1119,7 +1168,6 @@ const TABS_HITTING = [
   {id:'chase', label:'Chase'},
   {id:'swingdec', label:'Swing Decisions'},
   {id:'takes', label:'Takes'},
-  {id:'contact', label:'Contact'},
   {id:'sequences', label:'Sequences'}
 ];
 const TABS_PITCHING = [
@@ -1139,9 +1187,17 @@ const TABS_SCOUT = [
   {id:'scoutreport', label:'Scouting Report'},
   {id:'cheatsheet', label:'Cheat Sheet'}
 ];
+const TABS_LAB = [
+  {id:'space', label:'Space'},
+  {id:'heat', label:'Heat'},
+  {id:'spray', label:'Spray'},
+  {id:'trend', label:'Trend'},
+  {id:'batted', label:'Batted Ball'}
+];
 function currentTabs(){
   if (state.mode === 'pitching') return TABS_PITCHING;
   if (state.mode === 'scout') return TABS_SCOUT;
+  if (state.mode === 'lab') return TABS_LAB;
   return TABS_HITTING;
 }
 let activeTab = null;
@@ -1179,9 +1235,15 @@ function renderTraditional(rows){
 }
 
 /* ── Tab 2: Spray Chart ── */
-function renderSprayTab(rows){
-  const panel = document.getElementById('panel-spray');
+function renderLabSpace(rows){
+  const panel = document.getElementById('panel-space');
   panel.innerHTML = `
+    <div class="contact-btn-row" style="margin-bottom:6px;">
+      <button class="contact-btn" data-spraycam="catcher">Catcher</button>
+      <button class="contact-btn" data-spraycam="pitcher">Pitcher</button>
+      <button class="contact-btn" data-spraycam="side">Side</button>
+      <button class="contact-btn" data-spraycam="overhead">Overhead</button>
+    </div>
     <div id="spray-toolbar">
       <button class="spray-btn" data-col="ev">EV</button>
       <button class="spray-btn" data-col="pitch">Pitch</button>
@@ -1195,6 +1257,15 @@ function renderSprayTab(rows){
       <div id="spray_stat_card"><div class="card-result"></div></div>
       <div id="spray_chart_full" style="height:620px;"></div>
     </div>`;
+
+  panel.querySelectorAll('[data-spraycam]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      spraySt.camera = b.dataset.spraycam;
+      panel.querySelectorAll('[data-spraycam]').forEach(x=>x.classList.toggle('active', x.dataset.spraycam===spraySt.camera));
+      renderSprayChart(document.getElementById('spray_chart_full'), fdata());
+    });
+  });
+  panel.querySelectorAll('[data-spraycam]').forEach(b=>b.classList.toggle('active', b.dataset.spraycam===spraySt.camera));
 
   function syncButtons(){
     panel.querySelectorAll('.spray-btn[data-col]').forEach(b=>b.classList.toggle('active', b.dataset.col===spraySt.colorBy));
@@ -1345,11 +1416,65 @@ function renderDecisionGrid(panelId, rows, mode){
 }
 
 /* ── Tab 10: Contact (3D viewer) ── */
-function renderContactTab(rows){
-  const panel = document.getElementById('panel-contact');
+/* ============================================================
+   HITTING LAB — recreated from the Hitter HQ reference video.
+   Five tabs: Space, Heat, Spray, Trend, Batted Ball. Space and the Heat tab's
+   Contact Point sub-mode reuse the 3D point-cloud / contact-point machinery
+   already built for the (now-retired) standalone Spray Chart and Contact
+   tabs. Trend and Batted Ball had no reference frame in the video provided,
+   so those two are a best-effort design rather than a literal recreation.
+   ============================================================ */
+
+const labSt = { heatMode:'zone', zoneFilter:'pitches' };
+
+/* -- Heat tab: Zone density (Pitches/Swing/Whiff/Chase/Damage) or
+   Contact Point (reuses the old Contact tab's camera + metric toggles) -- */
+function renderLabHeat(rows){
+  const panel = document.getElementById('panel-heat');
   panel.innerHTML = `
-    <div id="contact-panel">
+    <div id="lab-heat-panel">
       <div class="contact-btn-row">
+        <button class="contact-btn" data-heatmode="zone">Zone</button>
+        <button class="contact-btn" data-heatmode="contact">Contact Point</button>
+      </div>
+      <div id="lab-heat-body"></div>
+    </div>`;
+  panel.querySelectorAll('[data-heatmode]').forEach(b=>{
+    b.addEventListener('click', ()=>{ labSt.heatMode=b.dataset.heatmode; renderLabHeat(fdata()); });
+  });
+  panel.querySelectorAll('[data-heatmode]').forEach(b=>b.classList.toggle('active', b.dataset.heatmode===labSt.heatMode));
+
+  const body = document.getElementById('lab-heat-body');
+  if (labSt.heatMode === 'zone'){
+    body.innerHTML = `
+      <div class="contact-btn-row" style="margin-top:8px;">
+        <button class="contact-btn" data-zf="pitches">Pitches</button>
+        <button class="contact-btn" data-zf="swing">Swing</button>
+        <button class="contact-btn" data-zf="whiff">Whiff</button>
+        <button class="contact-btn" data-zf="chase">Chase</button>
+        <button class="contact-btn" data-zf="damage">Damage</button>
+      </div>
+      <div id="lab-heat-subtitle" class="contact_subtitle" style="color:#8a96a8;font-size:11px;text-align:center;margin:6px 0;"></div>
+      <div id="lab-zone-chart" style="height:480px;"></div>`;
+    body.querySelectorAll('[data-zf]').forEach(b=>{
+      b.addEventListener('click', ()=>{ labSt.zoneFilter=b.dataset.zf; renderLabHeat(fdata()); });
+    });
+    body.querySelectorAll('[data-zf]').forEach(b=>b.classList.toggle('active', b.dataset.zf===labSt.zoneFilter));
+
+    const filters = {
+      pitches: { fn:()=>true,                          label:'Where they attack — density of all located pitches' },
+      swing:   { fn:r=>r.Swing,                         label:'Swing density' },
+      whiff:   { fn:r=>r.PitchCall==='StrikeSwinging',  label:'Whiff density' },
+      chase:   { fn:r=>r.Swing && !r.Zone,               label:'Chase density (swings outside the zone)' },
+      damage:  { fn:r=>r.InPlay && (r.H===1||r.HardHit===1), label:'Damage density (hits or 95+ EV)' },
+    };
+    const f = filters[labSt.zoneFilter];
+    const filteredRows = rows.filter(f.fn);
+    document.getElementById('lab-heat-subtitle').textContent = `${f.label} (n=${filteredRows.length})`;
+    zoneDensity(document.getElementById('lab-zone-chart'), filteredRows, '', 480, true);
+  } else {
+    body.innerHTML = `
+      <div class="contact-btn-row" style="margin-top:8px;">
         <button class="contact-btn" data-cam="catcher">Catcher</button>
         <button class="contact-btn" data-cam="pitcher">Pitcher</button>
         <button class="contact-btn" data-cam="side">Side</button>
@@ -1361,27 +1486,183 @@ function renderContactTab(rows){
       </div>
       <div id="contact_subtitle"></div>
       <div id="contact_n_label"></div>
-      <div id="contact_plot_3d" style="height:560px;"></div>
-    </div>`;
-  const subtitleFor = met => met==='ev' ? 'Barrel rate (98+ EV, 10-35°) by contact point'
-    : met==='la' ? 'Launch angle by contact point' : 'Barrel (98+ EV, 10-35°) by contact point';
-
-  function sync(){
-    panel.querySelectorAll('[data-cam]').forEach(b=>b.classList.toggle('active', b.dataset.cam===contactSt.camera));
-    panel.querySelectorAll('[data-met]').forEach(b=>b.classList.toggle('active', b.dataset.met===contactSt.metric));
-    document.getElementById('contact_subtitle').textContent = subtitleFor(contactSt.metric);
-    const n = rows.filter(r=>r.InPlay && r.CPX!=null && r.CPY!=null && r.CPZ!=null).length;
-    document.getElementById('contact_n_label').textContent = `n=${n} tracked contacts`;
+      <div id="contact_plot_3d" style="height:480px;"></div>`;
+    const subtitleFor = met => met==='ev' ? 'Average exit velocity by contact point'
+      : met==='la' ? 'Launch angle by contact point' : 'Barrel rate (98+ EV, 10-35°) by contact point';
+    function sync(){
+      body.querySelectorAll('[data-cam]').forEach(b=>b.classList.toggle('active', b.dataset.cam===contactSt.camera));
+      body.querySelectorAll('[data-met]').forEach(b=>b.classList.toggle('active', b.dataset.met===contactSt.metric));
+      document.getElementById('contact_subtitle').textContent = subtitleFor(contactSt.metric);
+      const n = rows.filter(r=>r.InPlay && r.CPX!=null && r.CPY!=null && r.CPZ!=null).length;
+      document.getElementById('contact_n_label').textContent = `n=${n} tracked contacts`;
+    }
+    body.querySelectorAll('[data-cam]').forEach(b=>b.addEventListener('click', ()=>{
+      contactSt.camera=b.dataset.cam; sync(); renderContactPlot(document.getElementById('contact_plot_3d'), fdata());
+    }));
+    body.querySelectorAll('[data-met]').forEach(b=>b.addEventListener('click', ()=>{
+      contactSt.metric=b.dataset.met; sync(); renderContactPlot(document.getElementById('contact_plot_3d'), fdata());
+    }));
+    sync();
+    renderContactPlot(document.getElementById('contact_plot_3d'), rows);
   }
-  panel.querySelectorAll('[data-cam]').forEach(b=>b.addEventListener('click', ()=>{
-    contactSt.camera=b.dataset.cam; sync(); renderContactPlot(document.getElementById('contact_plot_3d'), fdata());
-  }));
-  panel.querySelectorAll('[data-met]').forEach(b=>b.addEventListener('click', ()=>{
-    contactSt.metric=b.dataset.met; sync(); renderContactPlot(document.getElementById('contact_plot_3d'), fdata());
-  }));
-  sync();
-  renderContactPlot(document.getElementById('contact_plot_3d'), rows);
 }
+
+/* -- Spray tab: 2D Pull/Center/Oppo fan chart (distinct from the 3D
+   physics-arc version that lives in Space) -- */
+const labSpraySt = { colorBy:'ev' };
+function renderLabSpray(rows){
+  const panel = document.getElementById('panel-spray');
+  panel.innerHTML = `
+    <div id="lab-heat-panel">
+    <div class="contact-btn-row">
+      <button class="contact-btn" data-lsc="ev">Exit Velo</button>
+      <button class="contact-btn" data-lsc="pullopo">Pull/Oppo</button>
+      <button class="contact-btn" data-lsc="result">Result</button>
+      <button class="contact-btn" data-lsc="type">Type</button>
+    </div>
+    <div id="lab-spray-chart" style="height:560px;"></div>
+    </div>`;
+  panel.querySelectorAll('[data-lsc]').forEach(b=>{
+    b.addEventListener('click', ()=>{ labSpraySt.colorBy=b.dataset.lsc; renderLabSpray(fdata()); });
+  });
+  panel.querySelectorAll('[data-lsc]').forEach(b=>b.classList.toggle('active', b.dataset.lsc===labSpraySt.colorBy));
+  drawLabSprayFan(document.getElementById('lab-spray-chart'), rows);
+}
+
+function drawLabSprayFan(div, rows){
+  const inPlay = rows.filter(r=>r.InPlay && r.Bearing!=null && r.Dist!=null && r.Dist>0);
+  const pulled = r => r.BatterSide==='Right' ? r.Bearing < -15 : r.Bearing > 15;
+  const oppo   = r => r.BatterSide==='Right' ? r.Bearing > 15  : r.Bearing < -15;
+
+  // Field wedge as background shapes: pull (left third), center, oppo (right third)
+  const maxD = 350;
+  const wedge = (a0,a1,color) => {
+    const pts = []; const n=20;
+    pts.push([0,0]);
+    for (let i=0;i<=n;i++){ const a = a0 + (a1-a0)*i/n; pts.push([Math.sin(a)*maxD, Math.cos(a)*maxD]); }
+    pts.push([0,0]);
+    return { type:'path', path:'M '+pts.map(p=>p.join(',')).join(' L ')+' Z', fillcolor:color, line:{width:0}, layer:'below' };
+  };
+  const deg = Math.PI/180*45;
+  const shapes = [
+    wedge(-deg, -deg/3, 'rgba(180,60,60,0.28)'),
+    wedge(-deg/3, deg/3, 'rgba(140,140,150,0.18)'),
+    wedge(deg/3, deg, 'rgba(50,100,170,0.28)'),
+  ];
+
+  let colorVal, colorscale, cmin, cmax, showscale=false;
+  const tip = r => `${r.PlayResult}<br>EV ${fmt1(r.EV)} mph<br>Dist ${fmt0(r.Dist)} ft`;
+  let traces;
+  if (labSt && labSpraySt.colorBy === 'ev'){
+    traces = [{ type:'scatter', mode:'markers',
+      x:inPlay.map(r=>Math.sin(r.Bearing*Math.PI/180)*r.Dist), y:inPlay.map(r=>Math.cos(r.Bearing*Math.PI/180)*r.Dist),
+      text:inPlay.map(tip), hovertemplate:'%{text}<extra></extra>',
+      marker:{ size:8, color:inPlay.map(r=>r.EV), colorscale:[[0,'#1a237e'],[0.4,'#0288d1'],[0.7,'#ffeb3b'],[1,'#e53935']],
+        cmin:60, cmax:110, colorbar:{title:{text:'Exit Velo',font:{color:'#93a0b0',size:10}}, tickfont:{color:'#93a0b0',size:9}, thickness:12} },
+      showlegend:false }];
+  } else if (labSpraySt.colorBy === 'pullopo'){
+    const cats = [['Pull', pulled, '#c0392b'], ['Center', r=>!pulled(r)&&!oppo(r), '#9aa0a6'], ['Oppo', oppo, '#3070b0']];
+    traces = cats.map(([name,fn,color])=>{
+      const sub = inPlay.filter(fn);
+      return { type:'scatter', mode:'markers', name,
+        x:sub.map(r=>Math.sin(r.Bearing*Math.PI/180)*r.Dist), y:sub.map(r=>Math.cos(r.Bearing*Math.PI/180)*r.Dist),
+        text:sub.map(tip), hovertemplate:'%{text}<extra></extra>', marker:{size:8,color,opacity:0.9}, showlegend:true };
+    });
+  } else if (labSpraySt.colorBy === 'result'){
+    const cats = [...new Set(inPlay.map(r=>r.PlayResult))];
+    traces = cats.map(name=>{
+      const sub = inPlay.filter(r=>r.PlayResult===name);
+      return { type:'scatter', mode:'markers', name,
+        x:sub.map(r=>Math.sin(r.Bearing*Math.PI/180)*r.Dist), y:sub.map(r=>Math.cos(r.Bearing*Math.PI/180)*r.Dist),
+        text:sub.map(tip), hovertemplate:'%{text}<extra></extra>',
+        marker:{size:8,color:RESULT_COLORS[name]||'#888',opacity:0.9}, showlegend:true };
+    });
+  } else {
+    const cats = [...new Set(inPlay.map(r=>r.Pitch))];
+    traces = cats.map(name=>{
+      const sub = inPlay.filter(r=>r.Pitch===name);
+      return { type:'scatter', mode:'markers', name,
+        x:sub.map(r=>Math.sin(r.Bearing*Math.PI/180)*r.Dist), y:sub.map(r=>Math.cos(r.Bearing*Math.PI/180)*r.Dist),
+        text:sub.map(tip), hovertemplate:'%{text}<extra></extra>',
+        marker:{size:8,color:PITCH_COLORS[name]||'#888',opacity:0.9}, showlegend:true };
+    });
+  }
+
+  Plotly.newPlot(div, traces, {
+    paper_bgcolor:'#0d1117', plot_bgcolor:'#0d1117',
+    xaxis:{visible:false, range:[-maxD,maxD]}, yaxis:{visible:false, range:[-20,maxD], scaleanchor:'x'},
+    shapes,
+    annotations:[
+      {text:'PULL', x:-maxD*0.55, y:maxD*0.35, showarrow:false, font:{color:'#c0392b',size:14,family:'inherit'}},
+      {text:'CENTER', x:0, y:maxD*0.55, showarrow:false, font:{color:'#9aa0a6',size:14}},
+      {text:'OPPO', x:maxD*0.55, y:maxD*0.35, showarrow:false, font:{color:'#3070b0',size:14}},
+    ],
+    legend:{font:{color:'#93a0b0'}, bgcolor:'rgba(0,0,0,0)'},
+    margin:{l:10,r:10,t:10,b:10}, font:{color:'#93a0b0'}
+  }, {displayModeBar:false, responsive:true});
+}
+
+/* -- Trend tab: exit velocity over time, with a rolling-average trend line.
+   No reference frame was available for this tab in the video, so this is a
+   best-effort design rather than a literal recreation. -- */
+function renderLabTrend(rows){
+  const panel = document.getElementById('panel-trend');
+  panel.innerHTML = `<div class="chart-box" style="background:#0d1117;border-color:#232a35;"><div id="lab-trend-chart" style="height:480px;"></div></div>`;
+  const inPlay = rows.filter(r=>r.InPlay && r.EV!=null).slice().sort((a,b)=>(a.Date||'').localeCompare(b.Date));
+  const xs = inPlay.map((r,i)=>i+1);
+  const ys = inPlay.map(r=>r.EV);
+  Plotly.newPlot(document.getElementById('lab-trend-chart'), [
+    { type:'scatter', mode:'markers', x:xs, y:ys, name:'Exit Velo',
+      text:inPlay.map(r=>`${r.Date}<br>${r.PlayResult}<br>${fmt1(r.EV)} mph`), hovertemplate:'%{text}<extra></extra>',
+      marker:{ size:7, color:ys, colorscale:[[0,'#1a237e'],[0.5,'#0288d1'],[1,'#e53935']], cmin:60, cmax:110 } },
+    { type:'scatter', mode:'lines', x:xs, y:rollingTrend(xs,ys,8), name:'Trend', line:{color:'#f5a623',width:2.5} }
+  ], {
+    title:{text:'Exit Velocity Over Time', font:{color:'#93a0b0', size:13}},
+    xaxis:{title:'Batted Ball #', color:'#8a96a8', gridcolor:'#1e2530'},
+    yaxis:{title:'Exit Velo (mph)', color:'#8a96a8', gridcolor:'#1e2530'},
+    paper_bgcolor:'#0d1117', plot_bgcolor:'#0d1117', font:{color:'#93a0b0'},
+    legend:{font:{color:'#93a0b0'}, bgcolor:'rgba(0,0,0,0)'},
+    margin:{l:50,r:20,t:40,b:40}
+  }, {displayModeBar:false, responsive:true});
+}
+
+/* -- Batted Ball tab: type breakdown (GB/LD/FB/Popup). No reference frame
+   was available for this tab either — best-effort design. -- */
+function renderLabBattedBall(rows){
+  const panel = document.getElementById('panel-batted');
+  const inPlay = rows.filter(r=>r.InPlay);
+  const total = inPlay.length || 1;
+  const types = [
+    ['Ground Ball', r=>r.GB],
+    ['Line Drive', r=>r.LD],
+    ['Fly Ball', r=>r.FB_hit && !r.LD],
+    ['Popup', r=>r.HardHit!==undefined && r.FB_hit && r.LA!=null && r.LA>50],
+  ];
+  const summaryRows = [
+    ['Ground Ball', r=>r.GB], ['Line Drive', r=>r.LD], ['Fly Ball/Popup', r=>r.FB_hit],
+  ].map(([label,fn])=>{
+    const sub = inPlay.filter(fn);
+    return {
+      Type: label, Count: sub.length, 'Pct%': pct1(sub.length/total),
+      'Avg EV': fmt1(mean(sub,r=>r.EV)), 'Avg LA': fmt1(mean(sub,r=>r.LA)),
+      'Hard Hit%': pct1(sub.length? mean(sub,r=>r.HardHit):NaN),
+      BAA: fmt3(sub.length? mean(sub,r=>r.H) : NaN),
+    };
+  });
+  panel.innerHTML = `<div class="section-label" style="margin-top:0;">Batted Ball Types</div><div id="bb-table"></div>
+    <div class="section-label chart-row">Launch Angle Distribution</div>
+    <div class="chart-box"><div id="bb-hist" style="height:340px;"></div></div>`;
+  renderTable(document.getElementById('bb-table'), summaryRows, {pctCols:['Pct%','Hard Hit%'], rateCols:['BAA']});
+
+  Plotly.newPlot(document.getElementById('bb-hist'), [{
+    type:'histogram', x:inPlay.map(r=>r.LA).filter(v=>v!=null),
+    marker:{color:'#8C2232'}, nbinsx:30
+  }], {
+    xaxis:{title:'Launch Angle (°)'}, yaxis:{title:'Count'},
+    margin:{l:50,r:20,t:10,b:40}, bargap:0.05
+  }, {displayModeBar:false, responsive:true});
+}
+
 
 /* ── Tab 11: Sequences ── */
 function renderSequences(rows){
@@ -2063,10 +2344,17 @@ function renderAll(){
   } else if (state.mode === 'scout'){
     if (activeTab === 'scoutreport') renderScoutReport(rows);
     else if (activeTab === 'cheatsheet') renderCheatSheet(teamData());
+  } else if (state.mode === 'lab'){
+    switch(activeTab){
+      case 'space':  renderLabSpace(rows); break;
+      case 'heat':   renderLabHeat(rows); break;
+      case 'spray':  renderLabSpray(rows); break;
+      case 'trend':  renderLabTrend(rows); break;
+      case 'batted': renderLabBattedBall(rows); break;
+    }
   } else {
     switch(activeTab){
       case 'traditional': renderTraditional(rows); break;
-      case 'spray':       renderSprayTab(rows); break;
       case 'advanced':    renderAdvanced(rows); break;
       case 'evstats':     renderEvStats(rows); break;
       case 'evcharts':    renderEvCharts(rows); break;
@@ -2074,7 +2362,6 @@ function renderAll(){
       case 'chase':       renderHeatGrid('panel-chase', rows, 'chase'); break;
       case 'swingdec':    renderDecisionGrid('panel-swingdec', rows, 'swing'); break;
       case 'takes':       renderDecisionGrid('panel-takes', rows, 'take'); break;
-      case 'contact':     renderContactTab(rows); break;
       case 'sequences':   renderSequences(rows); break;
     }
   }
@@ -2101,6 +2388,7 @@ function backToLanding(){
 document.getElementById('tileHitting').addEventListener('click', ()=>enterMode('hitting'));
 document.getElementById('tilePitching').addEventListener('click', ()=>enterMode('pitching'));
 document.getElementById('tileScout').addEventListener('click', ()=>enterMode('scout'));
+document.getElementById('tileLab').addEventListener('click', ()=>enterMode('lab'));
 
 // Plotly draws to a fixed pixel size at render time. Print CSS shrinks the
 // scout report's containers for one-page layout, so force a resize right
