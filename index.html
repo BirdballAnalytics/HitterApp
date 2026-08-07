@@ -1523,39 +1523,15 @@ function scoutMetricsRow(rows){
 }
 
 /* ── Scout Tab: one-page opposing pitcher scouting report ──
-   "Damage" is defined here as any batted ball that was either a hit or
-   hit hard (95+ EV) — i.e. locations where this pitcher has gotten burned. */
-/* Simple 2x2 strike-zone quadrant chart, catcher's-eye view, no axis labels.
-   The quadrant with the highest "damage" rate (hits or 95+ EV, among pitches
-   located in that quadrant) is highlighted green — read as "this is where a
-   hitter should expect to do damage against this pitcher." No interpretation
-   reference image was provided, so this is a best-guess design; happy to
-   restyle once you can share the exact chart you have in mind. */
-function renderDamageQuadrant(div, rows, sideLabel){
-  const midY = (1.755 + 3.378) / 2;
-  const xMin=-1.1, xMax=1.1, yMin=1.0, yMax=4.15;
-  const totals = {ul:0, ur:0, dl:0, dr:0};
-  const dmg = {ul:0, ur:0, dl:0, dr:0};
-  rows.forEach(r=>{
-    if (r.PLS==null || r.PLH==null) return;
-    if (r.PLS<xMin || r.PLS>xMax || r.PLH<yMin || r.PLH>yMax) return;
-    const key = (r.PLH>=midY ? 'u':'d') + (r.PLS<0 ? 'l':'r');
-    totals[key]++;
-    if (r.InPlay && (r.H===1 || r.HardHit===1)) dmg[key]++;
-  });
-  const rate = {};
-  Object.keys(totals).forEach(k=> rate[k] = totals[k] ? dmg[k]/totals[k] : -1);
-  const best = Object.keys(rate).reduce((a,b)=> rate[b]>rate[a] ? b : a, 'ul');
-
-  const cell = key => `<div class="dmg-cell${key===best?' dmg-hi':''}"></div>`;
-  div.innerHTML = `
-    <div class="dmg-card">
-      <div class="dmg-title">${sideLabel}</div>
-      <div class="dmg-grid">
-        ${cell('ul')}${cell('ur')}${cell('dl')}${cell('dr')}
-      </div>
-    </div>`;
-}
+   "Damage" (used in the heat map column) is defined as any batted ball that
+   was either a hit or hit hard (95+ EV) — i.e. locations where this pitcher
+   has gotten burned. */
+const PITCH_ABBR = {
+  Fastball:'FB', TwoSeam:'2S', Sinker:'SI', Cutter:'CT',
+  ChangeUp:'CH', Changeup:'CH', Splitter:'SP',
+  Slider:'SL', Curveball:'CU', Sweeper:'SW', Slurve:'SV',
+  Screwball:'SC', Knuckleball:'KN', Other:'OT'
+};
 
 function renderScoutReport(rows){
   const panel = document.getElementById('panel-scoutreport');
@@ -1579,26 +1555,18 @@ function renderScoutReport(rows){
       <button id="scoutPrintBtn" class="spray-btn no-print" type="button">Download PDF</button>
     </div>
 
-    <div class="scout-top-grid-3">
+    <div class="scout-top-grid-2">
       <div>
         <div class="section-label" style="margin-top:0;">Season Stats</div>
         <div id="scout-summary"></div>
+        <div class="section-label" style="margin-top:10px;">TrackMan Data</div>
+        <div id="scout-metrics"></div>
       </div>
       <div>
         <div class="section-label" style="margin-top:0;">Pitch Break Chart</div>
         <div class="chart-box"><div id="scout-pitchplot"></div></div>
       </div>
-      <div>
-        <div class="section-label" style="margin-top:0;">Damage Zone</div>
-        <div class="scout-dmg-row">
-          <div id="scout-dmg-lhh-zone"></div>
-          <div id="scout-dmg-rhh-zone"></div>
-        </div>
-      </div>
     </div>
-
-    <div class="section-label chart-row">TrackMan Data</div>
-    <div id="scout-metrics"></div>
 
     <div class="section-label chart-row">Left-Handed Hitters</div>
     <div class="grid grid-4 scout-heat-grid">
@@ -1625,14 +1593,11 @@ function renderScoutReport(rows){
   xyScatter(document.getElementById('scout-pitchplot'), rows, {
     xField:'HB', yField:'IVB', xRange:[-30,30], yRange:[-30,30],
     colorField:'Pitch', colorMap:PITCH_COLORS, title:'',
-    xLabel:'Horizontal Break', yLabel:'Induced Vertical Break', tooltipFn:tipM, height:230
+    xLabel:'Horizontal Break', yLabel:'Induced Vertical Break', tooltipFn:tipM, height:290
   });
 
-  renderDamageQuadrant(document.getElementById('scout-dmg-lhh-zone'), rows.filter(r=>r.BatterSide==='Left'), 'LHH');
-  renderDamageQuadrant(document.getElementById('scout-dmg-rhh-zone'), rows.filter(r=>r.BatterSide==='Right'), 'RHH');
-
   renderTable(document.getElementById('scout-metrics'),
-    sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:p, ...scoutMetricsRow(byPitch.get(p))})));
+    sortPitchKeys([...byPitch.keys()]).map(p=>({Pitch:PITCH_ABBR[p]||p, ...scoutMetricsRow(byPitch.get(p))})));
 
   const isCH = r => r.Pitch === 'ChangeUp' || r.Pitch === 'Changeup';
   const isDamage = r => r.InPlay && (r.H===1 || r.HardHit===1);
