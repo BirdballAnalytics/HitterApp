@@ -736,6 +736,13 @@ function zoneDensity(div, rows, title, height=300, dark=false){
   const zoneStroke = dark ? 'rgba(255,255,255,.55)' : '#444';
   const zoneRect = `<rect x="${sx(-0.708).toFixed(1)}" y="${sy(3.378).toFixed(1)}" width="${(sx(0.708)-sx(-0.708)).toFixed(1)}" height="${(sy(1.755)-sy(3.378)).toFixed(1)}" fill="none" stroke="${zoneStroke}" stroke-width="1.4"/>`;
 
+  // Home plate icon, catcher's-eye view, sitting at the bottom of the zone
+  // (same geometry as the Plotly-era HOME_PLATE_ICON).
+  const plateFill = dark ? 'rgba(255,255,255,.1)' : '#ede1d2';
+  const plateStroke = dark ? 'rgba(255,255,255,.35)' : '#000';
+  const platePts = HOME_PLATE_ICON.x.map((x,i)=>`${sx(x).toFixed(1)},${sy(HOME_PLATE_ICON.y[i]).toFixed(1)}`).join(' ');
+  const plateShape = `<polygon points="${platePts}" fill="${plateFill}" stroke="${plateStroke}" stroke-width="1"/>`;
+
   const blurId = `bh${Math.random().toString(36).slice(2,9)}`;
   const titleText = hasTitle ? `${title}${dark?'':` (n=${rows.length})`}` : '';
   const titleColor = dark ? '#93a0b0' : '#333';
@@ -747,6 +754,7 @@ function zoneDensity(div, rows, title, height=300, dark=false){
       <defs><filter id="${blurId}" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="${Math.max(0.6,cellW*0.55).toFixed(2)}"/></filter></defs>
       <g filter="url(#${blurId})">${rects}</g>
       ${zoneRect}
+      ${plateShape}
     </svg>`;
 }
 
@@ -1431,8 +1439,12 @@ function renderEvCharts(rows){
       <div class="chart-box"><div id="ev_lhp_bb"></div></div>
     </div>`;
   const tip = r => `Pitch: ${r.Pitch}<br>EV: ${r.EV}<br>Result: ${r.PlayResult}`;
+  // ExitSpeedCategory isn't in the exported data, so it's derived here from
+  // EV directly (bins match HARD_HIT_COLORS: 0-74 / 75-95 / 95+).
+  const evCategory = ev => ev==null ? null : ev>=95 ? '95+' : ev>=75 ? '75-95' : '0-74';
   const evPlot = (id, filterFn, title) => zoneScatter(document.getElementById(id),
-    rows.filter(r=>r.InPlay && filterFn(r)), {colorField:'ExitSpeedCategory', colorMap:HARD_HIT_COLORS, title, tooltipFn:tip});
+    rows.filter(r=>r.InPlay && filterFn(r)).map(r=>({...r, ExitSpeedCategory: evCategory(r.EV)})),
+    {colorField:'ExitSpeedCategory', colorMap:HARD_HIT_COLORS, title, tooltipFn:tip});
 
   evPlot('ev_rhp',    r=>r.PitcherThrows==='Right', 'Exit Velo vs RHP');
   evPlot('ev_rhp_fb', r=>r.PitcherThrows==='Right' && r.FBc, 'Exit Velo vs RHP — FB');
@@ -1956,7 +1968,7 @@ function renderPitchingHeatGrid(panelId, rows, kind){
       <div class="chart-box"><div id="${kind}p_lhh_bb"></div></div>
     </div>`;
   const zoneWanted = kind==='whiff';
-  const base = r => r.PitchCall==='StrikeSwinging' && r.Zone===zoneWanted;
+  const base = r => r.PitchCall==='StrikeSwinging' && Boolean(r.Zone)===zoneWanted;
   const draw = (id, side, group, title) => zoneDensity(document.getElementById(id),
     rows.filter(r=>base(r) && r.BatterSide===side && r[group]), title);
   draw(`${kind}p_rhh_fb`, 'Right', 'FBc', `RHH FB ${label}`);
