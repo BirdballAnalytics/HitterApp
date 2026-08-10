@@ -260,9 +260,9 @@ def build():
     df["TaggedPitchType"] = df["TaggedPitchType"].replace({"TwoSeamFastBall": "TwoSeam"})
     df["PitchDisplay"] = df["TaggedPitchType"].replace({"FourSeamFastBall": "Fastball"})
 
-    df["ExitSpeedCategory"] = pd.cut(
-        df["ExitSpeed"], bins=[-1, 74.99, 94.99, 1000], labels=["0-74", "75-95", "95+"]
-    )
+    # (ExitSpeedCategory used to be computed here, but it was never actually
+    # included in the JSON export -- the frontend derives it from EV directly
+    # instead, so it's not needed in the pipeline at all.)
 
     print(f"Total rows: {len(df)}")
     print("Seasons found:", sorted(df["Season"].dropna().unique().tolist()))
@@ -375,4 +375,3 @@ def assemble_html(data_json):
 
 if __name__ == "__main__":
     build()
-  
