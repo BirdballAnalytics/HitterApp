@@ -94,6 +94,12 @@
   .chart-box{background:#fff;border:1px solid #eae6dd;border-radius:6px;padding:6px;}
   .chart-title{font-size:11px;font-weight:700;text-align:center;color:#333;padding:6px 0 0 0;}
 
+  /* -- HTML/CSS legends (replaces Plotly's built-in legend to avoid overlap) -- */
+  .zsc-plot{width:100%;}
+  .chip-legend{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px;padding:4px 6px 8px;}
+  .chip-legend-item{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#444;white-space:nowrap;}
+  .chip-swatch{width:9px;height:9px;border-radius:2px;flex:0 0 auto;display:inline-block;}
+
   /* -- Scout report layout -- */
   .scout-header-row{display:flex;justify-content:space-between;align-items:center;gap:12px;}
   .scout-top-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;align-items:start;}
@@ -629,7 +635,19 @@ function zoneShapes(dark=false){
 
 /* Generic 2D strike-zone scatter, colored by a categorical field.
    Mirrors sz_ggplot(). */
-function zoneScatter(div, rows, {colorField, colorMap, title, tooltipFn}){
+/* Builds a plain HTML/CSS legend (color swatch + label chips, wraps via
+   flexbox) instead of relying on Plotly's own legend layout — this is what
+   actually eliminates the legend-overlap risk, rather than just tuning
+   margins around it. */
+function htmlLegendHTML(cats, colorMap, isPitchField){
+  return cats.map(cat=>{
+    const label = isPitchField ? (PITCH_ABBR[cat]||cat) : cat;
+    const color = (colorMap&&colorMap[cat])||'#888';
+    return `<span class="chip-legend-item"><span class="chip-swatch" style="background:${color}"></span>${label}</span>`;
+  }).join('');
+}
+
+function zoneScatter(container, rows, {colorField, colorMap, title, tooltipFn}){
   const cats = [...new Set(rows.map(r=>r[colorField]).filter(v=>v!==null && v!==undefined))].sort();
   const isPitchField = colorField === 'Pitch';
   const traces = cats.map(cat=>{
@@ -642,40 +660,94 @@ function zoneScatter(div, rows, {colorField, colorMap, title, tooltipFn}){
       marker:{ color: (colorMap&&colorMap[cat])||'#888', size:8, opacity:0.85 }
     };
   });
+  container.innerHTML = `<div class="zsc-plot"></div><div class="chip-legend"></div>`;
+  const plotDiv = container.querySelector('.zsc-plot');
+  container.querySelector('.chip-legend').innerHTML = htmlLegendHTML(cats, colorMap, isPitchField);
   const layout = {
     title:{text:title, font:{size:12}},
     xaxis:{title:{text:'Horizontal Location', font:{size:10}}, range:[-2,2], zeroline:false},
     yaxis:{title:{text:'Vertical Location', font:{size:10}}, range:[0,5], zeroline:false, scaleanchor:'x'},
     shapes: zoneShapes(),
-    legend:{orientation:'h', y:-0.22, font:{size:9}, itemwidth:30},
-    margin:{l:45,r:10,t:34,b:46}, height:320
+    showlegend:false,
+    margin:{l:45,r:10,t:34,b:26}, height:284
   };
-  Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
+  Plotly.newPlot(plotDiv, traces, layout, {displayModeBar:false, responsive:true});
 }
 
 /* Density "heat map" for whiff/chase tabs — mirrors sz_density_plot()
    using Plotly's histogram2dcontour as a stand-in for ggplot's stat_density_2d. */
+/* -- Color interpolation helpers for the custom SVG heatmap -- */
+function lerpHex(c0, c1, t){
+  const p = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+  const [r0,g0,b0] = p(c0), [r1,g1,b1] = p(c1);
+  return `rgb(${Math.round(r0+(r1-r0)*t)},${Math.round(g0+(g1-g0)*t)},${Math.round(b0+(b1-b0)*t)})`;
+}
+function interpolateColor(stops, t){
+  t = Math.max(0, Math.min(1, t));
+  for (let i=0;i<stops.length-1;i++){
+    const [p0,c0] = stops[i], [p1,c1] = stops[i+1];
+    if (t>=p0 && t<=p1) return lerpHex(c0, c1, (p1-p0)===0 ? 0 : (t-p0)/(p1-p0));
+  }
+  return stops[stops.length-1][1];
+}
+const HEAT_STOPS_LIGHT = [[0,'#ffffff'],[1,'#8C2232']];
+const HEAT_STOPS_DARK  = [[0,'#10141a'],[0.35,'#3a2f4a'],[0.6,'#c2410c'],[1,'#fbbf24']];
+
+/* Custom SVG zone-density "heat map" — replaces the old Plotly-based version.
+   A binned + blurred grid, drawn as plain SVG rects under a gaussian-blur
+   filter, gives pixel-exact control at small tile sizes (the Cheat Sheet's
+   38px tiles in particular) without fighting a general-purpose chart
+   library's own margin/title layout. Same call signature as before, so every
+   existing caller works unchanged. */
 function zoneDensity(div, rows, title, height=300, dark=false){
-  const x = rows.map(r=>r.PLS), y = rows.map(r=>r.PLH);
-  const traces = [{
-    type:'histogram2dcontour', x, y,
-    colorscale: dark
-      ? [[0,'#10141a'],[0.35,'#3a2f4a'],[0.6,'#c2410c'],[1,'#fbbf24']]
-      : [[0,'#ffffff'],[1,'#8C2232']],
-    showscale:false, contours:{coloring:'fill', showlines:false},
-    ncontours: 12
-  }];
   const hasTitle = !!title;
-  const topMargin = hasTitle ? (height<250?16:24) : Math.min(6, Math.round(height*0.08));
-  const layout = {
-    title: hasTitle ? {text:`${title}${dark?'':` (n=${rows.length})`}`, font:{size:height<250?9:11, color: dark?'#93a0b0':undefined}} : undefined,
-    xaxis:{title:'', range:[-2,2], zeroline:false, showticklabels:false},
-    yaxis:{title:'', range:[0,4], zeroline:false, showticklabels:false, scaleanchor:'x'},
-    shapes: zoneShapes(dark),
-    margin:{l:4,r:4,t:topMargin,b:4}, height, showlegend:false,
-    plot_bgcolor: dark?'#10141a':'#fff', paper_bgcolor: dark?'#10141a':'#fff'
-  };
-  Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
+  const titleH = hasTitle ? (height<250?14:18) : 0;
+  const plotH = height - titleH;
+  const width = plotH; // roughly square, matching the zone's x:[-2,2] / y:[0,4] aspect
+
+  const xMin=-2, xMax=2, yMin=0, yMax=4;
+  const nx=16, ny=16;
+  const bins = Array.from({length:ny}, ()=>new Array(nx).fill(0));
+  rows.forEach(r=>{
+    if (r.PLS==null || r.PLH==null) return;
+    if (r.PLS<xMin || r.PLS>xMax || r.PLH<yMin || r.PLH>yMax) return;
+    const bx = Math.min(nx-1, Math.max(0, Math.floor((r.PLS-xMin)/(xMax-xMin)*nx)));
+    const by = Math.min(ny-1, Math.max(0, Math.floor((r.PLH-yMin)/(yMax-yMin)*ny)));
+    bins[by][bx]++;
+  });
+  const maxCount = Math.max(1, ...bins.map(row=>Math.max(...row)));
+  const stops = dark ? HEAT_STOPS_DARK : HEAT_STOPS_LIGHT;
+  const bgColor = dark ? '#10141a' : '#ffffff';
+  const cellW = width/nx, cellH = plotH/ny;
+
+  let rects = '';
+  for (let by=0; by<ny; by++){
+    for (let bx=0; bx<nx; bx++){
+      const t = bins[by][bx]/maxCount;
+      if (t<=0) continue;
+      const color = interpolateColor(stops, t);
+      const px = bx*cellW, py = plotH - (by+1)*cellH;
+      rects += `<rect x="${px.toFixed(1)}" y="${py.toFixed(1)}" width="${(cellW+0.7).toFixed(1)}" height="${(cellH+0.7).toFixed(1)}" fill="${color}"/>`;
+    }
+  }
+
+  const sx = v => (v-xMin)/(xMax-xMin)*width;
+  const sy = v => plotH - (v-yMin)/(yMax-yMin)*plotH;
+  const zoneStroke = dark ? 'rgba(255,255,255,.55)' : '#444';
+  const zoneRect = `<rect x="${sx(-0.708).toFixed(1)}" y="${sy(3.378).toFixed(1)}" width="${(sx(0.708)-sx(-0.708)).toFixed(1)}" height="${(sy(1.755)-sy(3.378)).toFixed(1)}" fill="none" stroke="${zoneStroke}" stroke-width="1.4"/>`;
+
+  const blurId = `bh${Math.random().toString(36).slice(2,9)}`;
+  const titleText = hasTitle ? `${title}${dark?'':` (n=${rows.length})`}` : '';
+  const titleColor = dark ? '#93a0b0' : '#333';
+  const titleSize = height<250 ? 9 : 11;
+
+  div.innerHTML = `
+    ${hasTitle ? `<div style="text-align:center;color:${titleColor};font-size:${titleSize}px;font-weight:${dark?400:700};height:${titleH}px;line-height:${titleH}px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 2px;">${titleText}</div>` : ''}
+    <svg viewBox="0 0 ${width} ${plotH}" width="100%" height="${plotH}" style="display:block;background:${bgColor};">
+      <defs><filter id="${blurId}" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="${Math.max(0.6,cellW*0.55).toFixed(2)}"/></filter></defs>
+      <g filter="url(#${blurId})">${rects}</g>
+      ${zoneRect}
+    </svg>`;
 }
 
 /* Simplified 2D "spray" widget: dots for batted-ball outcomes (Bearing/Distance)
@@ -688,17 +760,27 @@ function renderMiniSpray(div, rows, title, height=120){
     return { x:Math.sin(rad)*r.Dist, y:Math.cos(rad)*r.Dist, damage: r.H===1||r.HardHit===1 };
   });
   const maxD = 340;
-  const diamond = { x:[0,-maxD*0.72,0,maxD*0.72,0], y:[0,maxD*0.72,maxD*1.02,maxD*0.72,0] };
-  Plotly.newPlot(div, [
-    { type:'scatter', mode:'lines', x:diamond.x, y:diamond.y, line:{color:'#3a4150', width:1}, showlegend:false, hoverinfo:'skip' },
-    { type:'scatter', mode:'markers', x:pts.map(p=>p.x), y:pts.map(p=>p.y),
-      marker:{ size: height<80?2.5:4, color: pts.map(p=>p.damage?'#fb923c':'#5b6472'), opacity:0.85, line:{width:0} },
-      showlegend:false, hoverinfo:'skip' }
-  ], {
-    title:{text:title, font:{size:9,color:'#93a0b0'}},
-    xaxis:{visible:false, range:[-maxD,maxD]}, yaxis:{visible:false, range:[-20,maxD*1.05], scaleanchor:'x'},
-    margin:{l:1,r:1,t: title?16:2,b:1}, height, plot_bgcolor:'#10141a', paper_bgcolor:'#10141a', showlegend:false
-  }, {displayModeBar:false, responsive:true});
+  const titleH = title ? Math.min(16, Math.round(height*0.14)) : 0;
+  const plotH = height - titleH;
+  const width = plotH; // square viewBox, matching the -maxD..maxD range on both axes
+
+  const sx = v => width/2 + (v/maxD)*(width/2);
+  const sy = v => plotH - ((v+20)/(maxD*1.05+20))*plotH;
+
+  const diamond = [[0,0],[-maxD*0.72,maxD*0.72],[0,maxD*1.02],[maxD*0.72,maxD*0.72],[0,0]]
+    .map(([x,y])=>`${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(' ');
+
+  const dotR = height<80 ? 2.2 : 3.2;
+  const dots = pts.map(p=>
+    `<circle cx="${sx(p.x).toFixed(1)}" cy="${sy(p.y).toFixed(1)}" r="${dotR}" fill="${p.damage?'#fb923c':'#5b6472'}" opacity="0.85"/>`
+  ).join('');
+
+  div.innerHTML = `
+    ${title ? `<div style="text-align:center;color:#93a0b0;font-size:9px;height:${titleH}px;line-height:${titleH}px;overflow:hidden;white-space:nowrap;">${title}</div>` : ''}
+    <svg viewBox="0 0 ${width} ${plotH}" width="100%" height="${plotH}" style="display:block;background:#10141a;">
+      <polyline points="${diamond}" fill="none" stroke="#3a4150" stroke-width="1"/>
+      ${dots}
+    </svg>`;
 }
 
 // Starters typically throw far more pitches per outing than relievers.
@@ -1131,7 +1213,7 @@ const fmt2 = v => (v===null||v===undefined||Number.isNaN(v)) ? "-" : v.toFixed(2
 
 /* Generic (non strike-zone) XY scatter with a crosshair through the origin —
    used for Movement / Release / Extension charts. */
-function xyScatter(div, rows, {xField, yField, xRange, yRange, colorField, colorMap, title, xLabel, yLabel, tooltipFn, height=360}){
+function xyScatter(container, rows, {xField, yField, xRange, yRange, colorField, colorMap, title, xLabel, yLabel, tooltipFn, height=360}){
   const cats = [...new Set(rows.map(r=>r[colorField]).filter(v=>v!=null))].sort();
   const isPitchField = colorField === 'Pitch';
   const traces = cats.map(cat=>{
@@ -1143,15 +1225,17 @@ function xyScatter(div, rows, {xField, yField, xRange, yRange, colorField, color
       marker:{ color:(colorMap&&colorMap[cat])||'#888', size:height<300?5:8, opacity:0.85 }
     };
   });
-  const legendRows = Math.ceil(cats.length / 6);
+  container.innerHTML = `<div class="zsc-plot"></div><div class="chip-legend"></div>`;
+  const plotDiv = container.querySelector('.zsc-plot');
+  container.querySelector('.chip-legend').innerHTML = htmlLegendHTML(cats, colorMap, isPitchField);
   const layout = {
     title:{text:title, font:{size:12}},
     xaxis:{title:{text:xLabel, font:{size:10}}, range:xRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
     yaxis:{title:{text:yLabel, font:{size:10}}, range:yRange, zeroline:true, zerolinecolor:'#999', zerolinewidth:1.5},
-    legend:{orientation:'h', y:-0.05 - 0.09*legendRows, font:{size:9}, itemwidth:30},
-    margin:{l:44,r:8,t:30,b:38 + 16*legendRows}, height: height + 16*legendRows
+    showlegend:false,
+    margin:{l:44,r:8,t:30,b:24}, height
   };
-  Plotly.newPlot(div, traces, layout, {displayModeBar:false, responsive:true});
+  Plotly.newPlot(plotDiv, traces, layout, {displayModeBar:false, responsive:true});
 }
 
 /* Simple rolling-average trend line, standing in for R's loess smoother. */
@@ -1886,7 +1970,7 @@ function renderPitchingHeatGrid(panelId, rows, kind){
 /* ── Pitching Tab 10: Velo Over Time ── */
 function renderVeloOverTime(rows){
   const panel = document.getElementById('panel-velotime');
-  panel.innerHTML = `<div class="chart-box"><div id="velo-time" style="height:460px;"></div></div>`;
+  panel.innerHTML = `<div class="chart-box"><div id="velo-time" style="height:420px;"></div><div class="chip-legend" id="velo-time-legend"></div></div>`;
   const sorted = rows.slice().sort((a,b)=>(a.Date||'').localeCompare(b.Date));
   const maxVelo = maxOf(sorted, r=>r.RelSpeed) || 1;
   const cats = [...new Set(sorted.map(r=>r.Pitch))].sort();
@@ -1895,24 +1979,24 @@ function renderVeloOverTime(rows){
     const idxs = sorted.map((r,i)=>({r,i})).filter(o=>o.r.Pitch===cat);
     const xs = idxs.map(o=>o.i+1);
     const ys = idxs.map(o=> o.r.RelSpeed!=null ? (o.r.RelSpeed/maxVelo)*100 : null);
-    traces.push({ type:'scatter', mode:'markers', name:PITCH_ABBR[cat]||cat, x:xs, y:ys,
+    traces.push({ type:'scatter', mode:'markers', name:PITCH_ABBR[cat]||cat, x:xs, y:ys, showlegend:false,
       marker:{ color:PITCH_COLORS[cat]||'#888', size:7, line:{width:1,color:'#fff'} } });
     traces.push({ type:'scatter', mode:'lines', name:cat+' trend', showlegend:false,
       x:xs, y:rollingTrend(xs,ys), line:{ color:PITCH_COLORS[cat]||'#888', width:2.5 } });
   });
-  const legendRows = Math.ceil(cats.length / 7);
+  document.getElementById('velo-time-legend').innerHTML = htmlLegendHTML(cats, PITCH_COLORS, true);
   Plotly.newPlot(document.getElementById('velo-time'), traces, {
     title:{text:'Percentage of Max Velocity', font:{size:13}},
     xaxis:{title:{text:'Pitch Number', font:{size:10}}}, yaxis:{title:{text:'% of Max Velocity', font:{size:10}}, range:[50,100]},
-    legend:{orientation:'h', y:-0.08-0.09*legendRows, font:{size:9}, itemwidth:30},
-    margin:{l:50,r:10,t:34,b:60+16*legendRows}
+    showlegend:false,
+    margin:{l:50,r:10,t:34,b:40}
   }, {displayModeBar:false, responsive:true});
 }
 
 /* ── Pitching Tab 11: Strike% Over Time ── */
 function renderStrikeOverTime(rows){
   const panel = document.getElementById('panel-striketime');
-  panel.innerHTML = `<div class="chart-box"><div id="strike-time" style="height:460px;"></div></div>`;
+  panel.innerHTML = `<div class="chart-box"><div id="strike-time" style="height:420px;"></div><div class="chip-legend" id="strike-time-legend"></div></div>`;
   const sorted = rows.slice().sort((a,b)=>(a.Date||'').localeCompare(b.Date));
   const cats = [...new Set(sorted.map(r=>r.Pitch))].sort();
   const traces = [];
@@ -1921,17 +2005,17 @@ function renderStrikeOverTime(rows){
     let strikes = 0;
     const xs = idxs.map(o=>o.i+1);
     const ys = idxs.map((o,j)=>{ if (o.r.Strike) strikes++; return (strikes/(j+1))*100; });
-    traces.push({ type:'scatter', mode:'markers', name:PITCH_ABBR[cat]||cat, x:xs, y:ys,
+    traces.push({ type:'scatter', mode:'markers', name:PITCH_ABBR[cat]||cat, x:xs, y:ys, showlegend:false,
       marker:{ color:PITCH_COLORS[cat]||'#888', size:7, line:{width:1,color:'#fff'} } });
     traces.push({ type:'scatter', mode:'lines', name:cat+' trend', showlegend:false,
       x:xs, y:rollingTrend(xs,ys), line:{ color:PITCH_COLORS[cat]||'#888', width:2.5 } });
   });
-  const legendRows = Math.ceil(cats.length / 7);
+  document.getElementById('strike-time-legend').innerHTML = htmlLegendHTML(cats, PITCH_COLORS, true);
   Plotly.newPlot(document.getElementById('strike-time'), traces, {
     title:{text:'Cumulative Strike %', font:{size:13}},
     xaxis:{title:{text:'Pitch Number', font:{size:10}}}, yaxis:{title:{text:'Strike %', font:{size:10}}, range:[0,100]},
-    legend:{orientation:'h', y:-0.08-0.09*legendRows, font:{size:9}, itemwidth:30},
-    margin:{l:50,r:10,t:34,b:60+16*legendRows}
+    showlegend:false,
+    margin:{l:50,r:10,t:34,b:40}
   }, {displayModeBar:false, responsive:true});
 }
 
