@@ -23,6 +23,8 @@ import re
 import numpy as np
 import pandas as pd
 
+from sds_model import compute_sds
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "data")
 TEMPLATE_DIR = os.path.join(REPO_ROOT, "template")
@@ -95,6 +97,7 @@ def build():
     else:
         print(f"WARNING: {CALLED_STRIKE_FILE} not found — called_strike_prob will be blank")
         df["called_strike_prob"] = np.nan
+        ump = pd.DataFrame(columns=["PlateLocHeight", "PlateLocSide", "called_strike_prob"])
 
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df["Season"] = df["Date"].apply(season_label)
@@ -267,10 +270,12 @@ def build():
     print(f"Total rows: {len(df)}")
     print("Seasons found:", sorted(df["Season"].dropna().unique().tolist()))
 
-    export(df)
+    df, sds_league_mean, sds_league_sd = compute_sds(df, ump)
+
+    export(df, sds_league_mean, sds_league_sd)
 
 
-def export(df):
+def export(df, sds_league_mean=None, sds_league_sd=None):
     def r1(x):
         try:
             if pd.isna(x):
@@ -308,6 +313,8 @@ def export(df):
         "RelHeight", "RelSide", "Extension", "SpinRate", "SpinAxis", "VAA", "HAA", "OutsOnPlay", "RunsScored",
         # Count-state flags (pitching "Strike% By Count" tab)
         "Cnt01", "Cnt10", "Cnt11", "Cnt02", "Cnt12", "Cnt22", "Cnt20", "Cnt21", "Cnt30", "Cnt31", "CntFull",
+        # Swing Decision Score
+        "SDS", "AttackZone",
     ]
 
 
@@ -346,9 +353,14 @@ def export(df):
             r1(r["VertApprAngle"]), r1(r["HorzApprAngle"]), r1(r["OutsOnPlay"]), r1(r["RunsScored"]),
             b(r["Cnt01"]), b(r["Cnt10"]), b(r["Cnt11"]), b(r["Cnt02"]), b(r["Cnt12"]), b(r["Cnt22"]),
             b(r["Cnt20"]), b(r["Cnt21"]), b(r["Cnt30"]), b(r["Cnt31"]), b(r["CntFull"]),
+            r1(r["SDS"]), s(r["AttackZone"]),
         ])
 
-    payload = {"cols": cols, "rows": rows, "team": TEAM}
+    payload = {
+        "cols": cols, "rows": rows, "team": TEAM,
+        "sdsLeagueMean": None if sds_league_mean is None or pd.isna(sds_league_mean) else round(float(sds_league_mean), 3),
+        "sdsLeagueSd": None if sds_league_sd is None or pd.isna(sds_league_sd) else round(float(sds_league_sd), 3),
+    }
     data_json = json.dumps(payload, separators=(",", ":"))
     print(f"data.json payload: {len(rows)} rows x {len(cols)} cols, {len(data_json)/1e6:.2f} MB")
 
