@@ -1268,6 +1268,7 @@ const TABS_HITTING = [
   {id:'chase', label:'Chase'},
   {id:'swingdec', label:'Swing Decisions'},
   {id:'takes', label:'Takes'},
+  {id:'sds', label:'SDS'},
   {id:'sequences', label:'Sequences'}
 ];
 const TABS_PITCHING = [
@@ -1771,6 +1772,153 @@ function renderLabBattedBall(rows){
 
 
 /* ── Tab 11: Sequences ── */
+/* ── Hitting Tab: SDS (Swing Decision Score) ──
+   SDS is computed at build time in Python (scripts/sds_model.py, a port of
+   compute_sds.r) since it needs three trained random-forest models --
+   nothing a browser can reasonably do on page load. Every pitch that
+   qualifies (excludes 3-0 counts and near-zero-called-strike-probability
+   "waste" pitches that weren't swung at) already has r.SDS (0-100) and
+   r.AttackZone ('Heart'/'Shadow'/'Chase'/'Waste') baked in; this tab just
+   aggregates and displays it.
+
+   SDS+/Grade always use the FIXED league mean/SD baked into RAW at build
+   time (RAW.sdsLeagueMean / RAW.sdsLeagueSd) -- computed once, from the
+   full dataset, deliberately NOT recomputed from whatever season/date/game
+   filter happens to be selected. Recomputing it from a narrow filtered
+   slice was exactly the bug in the original weekly_sds_score.r (a
+   player's grade could shift just because the comparison population
+   changed, independent of anything they did) -- this keeps the same
+   comparison baseline no matter what's selected in the sidebar. */
+function sdsPlusAndGrade(meanSDS){
+  if (meanSDS==null || Number.isNaN(meanSDS) || RAW.sdsLeagueMean==null || !RAW.sdsLeagueSd){
+    return { plus:null, grade:null };
+  }
+  const z = (meanSDS - RAW.sdsLeagueMean) / RAW.sdsLeagueSd;
+  return {
+    plus: Math.round((100 + z*10) * 10) / 10,
+    grade: Math.min(80, Math.max(20, Math.round(50 + z*10)))
+  };
+}
+
+// Every BC hitter, respecting season/date/game filters but NOT the
+// sidebar's specific-hitter selection -- this is what makes "each hitter
+// gets a score" true regardless of who's currently selected.
+function sdsTeamRows(){
+  const [s,e] = [state.dateStart, state.dateEnd];
+  const gamesAll = state.games.includes("All") || state.games.length===0;
+  const gameSet = gamesAll ? null : new Set(state.games);
+  return ALL_ROWS.filter(r=>{
+    if (r.BatterTeam !== TEAM) return false;
+    if (!inRange(r.Date, s, e)) return false;
+    if (gameSet && !gameSet.has(r.Game)) return false;
+    return true;
+  });
+}
+
+const SDS_ZONE_ORDER = ['Heart','Shadow','Chase','Waste'];
+
+function renderSDS(rows){
+  const panel = document.getElementById('panel-sds');
+  const hasLeague = RAW.sdsLeagueMean != null;
+
+  panel.innerHTML = `
+    <div class="section-label" style="margin-top:0;">Player Leaderboard</div>
+    <div id="sds-leaderboard"></div>
+    ${!hasLeague ? '<div class="empty-msg">SDS model unavailable for this build (not enough eligible data to train on).</div>' : ''}
+    <div class="section-label chart-row">By Pitch Type — ${state.player==='All' ? 'Team' : state.player}</div>
+    <div id="sds-bypitch"></div>
+    <div class="section-label chart-row">By Location — ${state.player==='All' ? 'Team' : state.player}</div>
+    <div class="grid" style="grid-template-columns:260px 1fr;gap:14px;">
+      <div class="chart-box"><div id="sds-zone-diagram"></div></div>
+      <div id="sds-byzone"></div>
+    </div>`;
+
+  if (!hasLeague) return;
+
+  // ---- Leaderboard ----
+  const teamRows = sdsTeamRows().filter(r=>r.SDS!=null);
+  const byHitter = groupBy(teamRows, r=>r.Batter);
+  const leaderboard = [...byHitter.keys()].map(name=>{
+    const sub = byHitter.get(name);
+    const meanSDS = mean(sub, r=>r.SDS);
+    const {plus, grade} = sdsPlusAndGrade(meanSDS);
+    return { Hitter:name, Pitches: sub.length, 'Mean SDS': fmt1(meanSDS),
+      'SDS+': plus==null?'-':plus, Grade: grade==null?'-':grade, _sort: plus==null?-999:plus };
+  }).sort((a,b)=> b._sort - a._sort).map(({_sort, ...r})=>r);
+  renderTable(document.getElementById('sds-leaderboard'), leaderboard, {rateCols:['SDS+','Grade']});
+
+  // ---- By Pitch Type (respects the sidebar's Hitter filter) ----
+  const sdsRows = rows.filter(r=>r.SDS!=null);
+  const byPitch = groupBy(sdsRows, r=>r.Pitch);
+  const pitchTable = sortPitchKeys([...byPitch.keys()]).map(p=>{
+    const sub = byPitch.get(p);
+    const meanSDS = mean(sub, r=>r.SDS);
+    const {plus} = sdsPlusAndGrade(meanSDS);
+    return { Pitch:p, Pitches: sub.length, 'Mean SDS': fmt1(meanSDS), 'SDS+': plus==null?'-':plus };
+  });
+  renderTable(document.getElementById('sds-bypitch'), pitchTable, {rateCols:['SDS+']});
+
+  // ---- By Location: Heart / Shadow / Chase / Waste ----
+  const byZone = groupBy(sdsRows, r=>r.AttackZone);
+  const zoneTable = SDS_ZONE_ORDER.filter(z=>byZone.has(z)).map(z=>{
+    const sub = byZone.get(z);
+    const meanSDS = mean(sub, r=>r.SDS);
+    const {plus} = sdsPlusAndGrade(meanSDS);
+    const swings = sub.filter(r=>r.Swing);
+    return { Zone:z, Pitches: sub.length, 'Mean SDS': fmt1(meanSDS), 'SDS+': plus==null?'-':plus,
+      'Swing%': pct1(mean(sub,r=>r.Swing)), 'Whiff%': pct1(swings.length? mean(swings,r=>r.Whiff):NaN) };
+  });
+  renderTable(document.getElementById('sds-byzone'), zoneTable, {rateCols:['SDS+'], pctCols:['Swing%','Whiff%']});
+  renderSDSZoneDiagram(document.getElementById('sds-zone-diagram'), zoneTable);
+}
+
+/* Baseball-Savant-style nested attack-zone diagram: 4 concentric rings
+   (Waste outermost, then Chase, Shadow, Heart innermost), each colored by
+   that zone's mean SDS. Same geometric definition as the Python pipeline's
+   Heart/Shadow/Chase/Waste split (STRIKE_TOP/BOTTOM/LEFT/RIGHT + the
+   2/3, 4/3, 2x multiplier boundaries) so the picture matches the numbers. */
+function renderSDSZoneDiagram(div, zoneTable){
+  const stats = {}; zoneTable.forEach(z=>{ stats[z.Zone] = z; });
+  const STRIKE_TOP=3.5, STRIKE_BOTTOM=1.5, STRIKE_LEFT=-0.95, STRIKE_RIGHT=0.95;
+  const cx=(STRIKE_LEFT+STRIKE_RIGHT)/2, cy=(STRIKE_BOTTOM+STRIKE_TOP)/2;
+  const halfW=(STRIKE_RIGHT-STRIKE_LEFT)/2, halfH=(STRIKE_TOP-STRIKE_BOTTOM)/2;
+  const pad = 0.25;
+  const xMin=cx-halfW*2-pad, xMax=cx+halfW*2+pad, yMin=cy-halfH*2-pad, yMax=cy+halfH*2+pad;
+  const W=230, H=230;
+  const sx = v => (v-xMin)/(xMax-xMin)*W;
+  const sy = v => H - (v-yMin)/(yMax-yMin)*H;
+
+  const vals = SDS_ZONE_ORDER.map(z=> stats[z] ? parseFloat(stats[z]['Mean SDS']) : NaN).filter(v=>!Number.isNaN(v));
+  const minV = Math.min(...vals), maxV = Math.max(...vals);
+  const colorFor = v => {
+    if (v==null || Number.isNaN(v) || minV===maxV) return '#ccc';
+    const t = (v-minV)/(maxV-minV);
+    return interpolateColor([[0,'#ef4444'],[0.5,'#eab308'],[1,'#22c55e']], t);
+  };
+
+  const ringRect = (mult, zoneName) => {
+    const val = stats[zoneName] ? parseFloat(stats[zoneName]['Mean SDS']) : NaN;
+    const x0=sx(cx-halfW*mult), x1=sx(cx+halfW*mult), y0=sy(cy+halfH*mult), y1=sy(cy-halfH*mult);
+    return `<rect x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${(x1-x0).toFixed(1)}" height="${(y1-y0).toFixed(1)}" fill="${colorFor(val)}" fill-opacity="0.6" stroke="#333" stroke-width="1"/>`;
+  };
+
+  const svg = `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="230">
+      <rect x="0" y="0" width="${W}" height="${H}" fill="${colorFor(stats['Waste']?parseFloat(stats['Waste']['Mean SDS']):NaN)}" fill-opacity="0.6"/>
+      ${ringRect(2, 'Chase')}
+      ${ringRect(4/3, 'Shadow')}
+      ${ringRect(2/3, 'Heart')}
+      <text x="${W/2}" y="${sy(cy)-2}" text-anchor="middle" font-size="10" font-weight="700" fill="#222">Heart</text>
+    </svg>
+    <div class="chip-legend" style="justify-content:center;">
+      ${SDS_ZONE_ORDER.filter(z=>stats[z]).map(z=>
+        `<span class="chip-legend-item"><span class="chip-swatch" style="background:${colorFor(parseFloat(stats[z]['Mean SDS']))}"></span>${z} (${stats[z]['Mean SDS']})</span>`
+      ).join('')}
+    </div>`;
+  div.innerHTML = svg;
+}
+
+
 function renderSequences(rows){
   const panel = document.getElementById('panel-sequences');
   panel.innerHTML = `
@@ -2472,6 +2620,7 @@ function renderAll(){
       case 'chase':       renderHeatGrid('panel-chase', rows, 'chase'); break;
       case 'swingdec':    renderDecisionGrid('panel-swingdec', rows, 'swing'); break;
       case 'takes':       renderDecisionGrid('panel-takes', rows, 'take'); break;
+      case 'sds':          renderSDS(rows); break;
       case 'sequences':   renderSequences(rows); break;
     }
   }
