@@ -1,7 +1,7 @@
 name: Rebuild and publish hitter report
-
-# Runs automatically whenever new/updated data is pushed, or the build logic
-# itself changes. Also runnable by hand from the Actions tab.
+# Runs automatically whenever new/updated data is pushed, the build logic
+# itself changes, or a root-level HTML file changes. Also runnable by hand
+# from the Actions tab.
 "on":
   push:
     branches: [main]
@@ -9,35 +9,29 @@ name: Rebuild and publish hitter report
       - 'data/**'
       - 'template/**'
       - 'scripts/**'
+      - '*.html'
   workflow_dispatch: {}
-
 permissions:
   contents: write   # to commit the rebuilt index.html back to the repo
   pages: write       # to publish to GitHub Pages
   id-token: write    # required by actions/deploy-pages
-
 concurrency:
   group: "pages"
   cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Build index.html from data/
         run: python scripts/build.py
-
       - name: Commit rebuilt site back to the repo
         run: |
           git config user.name "github-actions[bot]"
@@ -49,18 +43,18 @@ jobs:
             git commit -m "Auto-rebuild hitter report from updated data [skip ci]"
             git push
           fi
-
-      # Package just the generated report (not the raw data/scripts) for Pages
+      # Package the generated report AND any other root-level HTML files
+      # (e.g. test/utility pages) for Pages. Previously this only ever
+      # copied index.html, so nothing else at the repo root was ever
+      # actually deployed no matter what triggered the workflow.
       - name: Prepare Pages artifact
         run: |
           mkdir -p _site
-          cp index.html _site/index.html
-
+          cp *.html _site/
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
-
   deploy:
     needs: build
     runs-on: ubuntu-latest
