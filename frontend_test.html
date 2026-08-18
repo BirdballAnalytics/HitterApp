@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>D1 Data API — Connection Test</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { font-size: 20px; }
+  label { display: block; font-weight: 600; margin-top: 16px; font-size: 13px; }
+  input { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box; margin-top: 4px; }
+  button { margin-top: 16px; padding: 10px 20px; font-size: 14px; cursor: pointer; background: #8C2232; color: white; border: none; border-radius: 4px; }
+  button:hover { background: #6d1a27; }
+  .result { margin-top: 24px; padding: 14px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; font-family: monospace; }
+  .ok { background: #e8f5e9; border: 1px solid #4caf50; }
+  .err { background: #fdecea; border: 1px solid #f44336; }
+  .hint { color: #666; font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <h1>D1 Data API — Connection Test</h1>
+  <p>Paste your Supabase project URL and public API key below. Supabase has been migrating projects to a new key format, so what you're looking for depends on which your project has:</p>
+  <ul style="font-size: 13px; color: #444;">
+    <li><b>New format:</b> starts with <code>sb_publishable_...</code> — find it under <b>Project Settings → API Keys</b> (the default tab).</li>
+    <li><b>Legacy format:</b> starts with <code>eyJ...</code> (a JWT) and is called the <b>anon</b> key — if your project doesn't show a publishable key by default, look for a <b>"Legacy API Keys"</b> tab in that same section.</li>
+  </ul>
+  <p>Either works fine here. This key is meant to be public — it's safe to use in a test page like this one; row-level security (not secrecy of this key) is what actually protects the data.</p>
+
+  <label>Project URL <span class="hint">(e.g. https://xxxxxxxx.supabase.co)</span></label>
+  <input id="url" placeholder="https://xxxxxxxx.supabase.co">
+
+  <label>Public API key <span class="hint">(sb_publishable_... or the legacy anon eyJ... key)</span></label>
+  <input id="key" placeholder="sb_publishable_... or eyJhbGci...">
+
+  <button onclick="runTest()">Test Connection</button>
+  <div id="keyhint" class="hint"></div>
+
+  <div id="output"></div>
+
+<script>
+  document.getElementById('url').value = localStorage.getItem('d1_url') || '';
+  document.getElementById('key').value = localStorage.getItem('d1_key') || '';
+
+  document.getElementById('key').addEventListener('input', (e) => {
+    const k = e.target.value.trim();
+    const hint = document.getElementById('keyhint');
+    if (!k) { hint.textContent = ''; return; }
+    if (k.startsWith('sb_publishable_')) hint.textContent = `Looks like a new-format publishable key. Length: ${k.length} chars.`;
+    else if (k.startsWith('sb_secret_')) hint.textContent = `⚠ This looks like a SECRET key, not publishable -- don't use this one here, it should never go in client-facing code.`;
+    else if (k.startsWith('eyJ')) hint.textContent = `Looks like a legacy JWT key. Length: ${k.length} chars (a full anon key is usually 200+ characters -- if this looks short, it may be truncated).`;
+    else hint.textContent = `⚠ Doesn't start with sb_publishable_, sb_secret_, or eyJ -- double check you copied the right value.`;
+  });
+
+  // Local-only convenience: remembers what you typed so you don't have
+  // to re-paste every time you reload this page. Nothing here is sent
+  // anywhere except directly to your own Supabase project.
+  document.getElementById('url').value = localStorage.getItem('d1_url') || '';
+  document.getElementById('key').value = localStorage.getItem('d1_key') || '';
+
+  async function runTest(){
+    const url = document.getElementById('url').value.trim().replace(/\/$/, '');
+    const key = document.getElementById('key').value.trim();
+    const out = document.getElementById('output');
+    out.innerHTML = '';
+
+    if (!url || !key) {
+      out.innerHTML = `<div class="result err">Enter both the project URL and anon key first.</div>`;
+      return;
+    }
+    localStorage.setItem('d1_url', url);
+    localStorage.setItem('d1_key', key);
+
+    const headers = { apikey: key };
+    // Deliberately NOT also sending Authorization: Bearer here. The
+    // newer sb_publishable_.../sb_secret_... key format Supabase is
+    // migrating projects to doesn't work via that header the way the
+    // legacy JWT anon/service_role keys did -- apikey alone is what
+    // works for both formats for a plain public read like this.
+    const checks = [
+      { label: 'teams',   query: `${url}/rest/v1/teams?select=team_id,team_name&limit=5` },
+      { label: 'games',   query: `${url}/rest/v1/games?select=trackman_game_id,status&limit=5` },
+      { label: 'pitches', query: `${url}/rest/v1/pitches?select=pitcher,batter,pitch_call,attack_zone&limit=5` },
+      { label: 'games (count by status)', query: `${url}/rest/v1/games?select=status`, isCount: true },
+    ];
+
+    for (const c of checks) {
+      const div = document.createElement('div');
+      div.className = 'result';
+      out.appendChild(div);
+      try {
+        const resp = await fetch(c.query, { headers });
+        const text = await resp.text();
+        if (!resp.ok) {
+          div.className = 'result err';
+          div.textContent = `${c.label}: HTTP ${resp.status}\n${text}`;
+          continue;
+        }
+        const data = JSON.parse(text);
+        div.className = 'result ok';
+        if (c.isCount) {
+          const counts = {};
+          data.forEach(r => { counts[r.status] = (counts[r.status]||0) + 1; });
+          div.textContent = `${c.label}: OK\n${JSON.stringify(counts, null, 2)}\n(showing status counts from the first page returned by default -- not the true total, just enough to confirm real rows are coming back)`;
+        } else {
+          div.textContent = `${c.label}: OK, ${data.length} row(s)\n${JSON.stringify(data, null, 2)}`;
+        }
+      } catch (e) {
+        div.className = 'result err';
+        div.textContent = `${c.label}: ${e.message}\n(likely a wrong URL, or the project blocking cross-origin requests -- shouldn't happen for Supabase's own API, but worth knowing if you see this)`;
+      }
+    }
+  }
+</script>
+</body>
+</html>
