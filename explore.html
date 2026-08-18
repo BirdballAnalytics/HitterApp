@@ -104,7 +104,7 @@
       // style) and pitches (full school name from a different API
       // field), so the ID is the only reliable join key. See migration
       // 004 for the backfill this depends on.
-      const url = `${apiBase()}/rest/v1/pitches?select=pitcher,pitch_call&pitcher_team_id=eq.${encodeURIComponent(teamId)}&limit=5000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=pitcher_id,pitcher,pitch_call&pitcher_team_id=eq.${encodeURIComponent(teamId)}&limit=5000`;
       const resp = await fetch(url, { headers: headers() });
       if (!resp.ok) { container.innerHTML += `<div class="status">Error: HTTP ${resp.status} — ${await resp.text()}</div>`; return; }
       const rows = await resp.json();
@@ -116,21 +116,117 @@
 
       const byPitcher = {};
       rows.forEach(r => {
-        byPitcher[r.pitcher] = byPitcher[r.pitcher] || { pitches: 0, inPlay: 0 };
-        byPitcher[r.pitcher].pitches++;
-        if (r.pitch_call === 'IP') byPitcher[r.pitcher].inPlay++;
+        const key = r.pitcher_id;
+        byPitcher[key] = byPitcher[key] || { name: r.pitcher, pitches: 0, inPlay: 0 };
+        byPitcher[key].pitches++;
+        if (r.pitch_call === 'IP') byPitcher[key].inPlay++;
       });
       const sorted = Object.entries(byPitcher).sort((a,b) => b[1].pitches - a[1].pitches);
 
       container.innerHTML = `
         <h2>${teamName}</h2>
-        <div class="status">${rows.length} pitches loaded (capped at 5000 for this prototype) across ${sorted.length} pitcher(s)</div>
+        <div class="status">${rows.length} pitches loaded (capped at 5000 for this prototype) across ${sorted.length} pitcher(s) -- click a name for detail</div>
         <table>
           <tr><th>Pitcher</th><th>Pitches</th><th>Balls In Play</th></tr>
-          ${sorted.map(([name, s]) => `<tr><td>${name}</td><td>${s.pitches}</td><td>${s.inPlay}</td></tr>`).join('')}
-        </table>`;
+          ${sorted.map(([id, s]) => `<tr class="pitcher-row" data-id="${id}" data-name="${s.name}"><td>${s.name}</td><td>${s.pitches}</td><td>${s.inPlay}</td></tr>`).join('')}
+        </table>
+        <div id="pitcherDetail"></div>`;
+      container.querySelectorAll('.pitcher-row').forEach(row => {
+        row.addEventListener('click', () => selectPitcher(row.dataset.id, row.dataset.name));
+      });
     } catch (e) {
       container.innerHTML = `<h2>${teamName}</h2><div class="status">${e.message}</div>`;
+    }
+  }
+
+  // ---- Pitcher detail: pitch mix, outcome rates, zone breakdown -- all
+  // computed from real pitch-level rows, live. Outcome codes (B/SL/SS/F/
+  // IP/HBP) are the ones confirmed against real data earlier; anything
+  // else falls into an "other" bucket rather than being silently
+  // miscounted. ----
+  const SWING_CODES = new Set(['SS', 'F', 'IP']);   // swinging strike, foul, in play
+  const TAKE_CODES = new Set(['B', 'SL']);           // ball, called strike
+
+  async function selectPitcher(pitcherId, pitcherName){
+    const detail = document.getElementById('pitcherDetail');
+    detail.innerHTML = `<div class="status">Loading ${pitcherName}...</div>`;
+    detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    try {
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,tagged_pitch_type,pitch_call,rel_speed,spin_rate,attack_zone&pitcher_id=eq.${encodeURIComponent(pitcherId)}&limit=3000`;
+      const resp = await fetch(url, { headers: headers() });
+      if (!resp.ok) { detail.innerHTML = `<div class="status">Error: HTTP ${resp.status} — ${await resp.text()}</div>`; return; }
+      const rows = await resp.json();
+      if (rows.length === 0) { detail.innerHTML = `<div class="empty">No detail rows found.</div>`; return; }
+
+      const games = new Set(rows.map(r => r.trackman_game_id)).size;
+
+      // Pitch mix: count/%%/avg velo/avg spin per tagged_pitch_type
+      const byType = {};
+      rows.forEach(r => {
+        const t = r.tagged_pitch_type || 'Unknown';
+        byType[t] = byType[t] || { count: 0, veloSum: 0, veloN: 0, spinSum: 0, spinN: 0 };
+        byType[t].count++;
+        if (r.rel_speed != null) { byType[t].veloSum += r.rel_speed; byType[t].veloN++; }
+        if (r.spin_rate != null) { byType[t].spinSum += r.spin_rate; byType[t].spinN++; }
+      });
+      const mixRows = Object.entries(byType).sort((a,b) => b[1].count - a[1].count);
+
+      // Outcome rates from the confirmed real pitch_call codes
+      let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0, other=0;
+      rows.forEach(r => {
+        if (r.pitch_call === 'B') balls++;
+        else if (r.pitch_call === 'SL') calledStrikes++;
+        else if (r.pitch_call === 'SS') swingingStrikes++;
+        else if (r.pitch_call === 'F') fouls++;
+        else if (r.pitch_call === 'IP') inPlay++;
+        else if (r.pitch_call === 'HBP') hbp++;
+        else other++;
+      });
+      const swings = swingingStrikes + fouls + inPlay;
+      const total = rows.length;
+      const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
+      const strikePct = ((calledStrikes + swingingStrikes + fouls + inPlay) / total * 100);
+
+      // Zone breakdown (Heart/Shadow/Chase/Waste)
+      const byZone = { Heart: 0, Shadow: 0, Chase: 0, Waste: 0 };
+      let zoneKnown = 0;
+      rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
+
+      detail.innerHTML = `
+        <h3 style="margin-top:20px;">${pitcherName} — detail</h3>
+        <div class="status">${total} pitches across ${games} game(s)</div>
+
+        <table>
+          <tr><th>Pitch Type</th><th>Count</th><th>%</th><th>Avg Velo</th><th>Avg Spin</th></tr>
+          ${mixRows.map(([type, s]) => `<tr>
+            <td>${type}</td><td>${s.count}</td><td>${(s.count/total*100).toFixed(1)}%</td>
+            <td>${s.veloN ? (s.veloSum/s.veloN).toFixed(1) : '-'}</td>
+            <td>${s.spinN ? Math.round(s.spinSum/s.spinN) : '-'}</td>
+          </tr>`).join('')}
+        </table>
+
+        <table>
+          <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
+          <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
+          <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
+          <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
+          ${other ? `<tr><td>Other/unrecognized code</td><td>${other}</td><td>${(other/total*100).toFixed(1)}%</td></tr>` : ''}
+          <tr><td><b>Strike%</b></td><td colspan="2">${strikePct.toFixed(1)}%</td></tr>
+          <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
+        </table>
+
+        <table>
+          <tr><th>Zone</th><th>Count</th><th>%</th></tr>
+          ${Object.entries(byZone).map(([z,c]) => `<tr><td>${z}</td><td>${c}</td><td>${zoneKnown ? (c/zoneKnown*100).toFixed(1) : '0.0'}%</td></tr>`).join('')}
+        </table>
+        <div class="status">${total - zoneKnown} pitch(es) have no location data and aren't in the zone breakdown.</div>
+      `;
+    } catch (e) {
+      detail.innerHTML = `<div class="status">${e.message}</div>`;
     }
   }
 </script>
