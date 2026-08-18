@@ -39,6 +39,16 @@
   .sidebar input { width: 100%; padding: 8px; font-size: 13px; border: none; border-radius: 4px; }
   .sidebar-divider { border-top: 1px solid rgba(255,255,255,0.2); margin: 16px 0; }
   #teamResults { margin-top: 4px; background: white; border-radius: 4px; max-height: 240px; overflow-y: auto; }
+  #playerResults { margin-top: 4px; background: white; border-radius: 4px; max-height: 280px; overflow-y: auto; }
+  .player-row { padding: 7px 10px; cursor: pointer; font-size: 13px; color: #222; border-bottom: 1px solid #eee;
+    display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+  .player-row:hover { background: var(--cream); }
+  .player-row:last-child { border-bottom: none; }
+  .role-badge { font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 8px; flex: 0 0 auto; }
+  .role-badge.pitcher { background: #e3e8f0; color: #33517a; }
+  .role-badge.hitter { background: rgba(140,34,50,0.12); color: var(--maroon); }
+  .player-row .team-sub { font-size: 10px; color: #999; }
   .team-row { padding: 7px 10px; cursor: pointer; font-size: 13px; color: #222; border-bottom: 1px solid #eee; }
   .team-row:hover { background: var(--cream); }
   .team-row:last-child { border-bottom: none; }
@@ -96,6 +106,11 @@
       <div id="teamResults"></div>
 
       <div class="sidebar-divider"></div>
+      <label for="playerSearch">Search any player</label>
+      <input id="playerSearch" placeholder="Search by player name..." autocomplete="off">
+      <div id="playerResults"></div>
+
+      <div class="sidebar-divider"></div>
       <div class="settings-toggle" onclick="toggleSettings()">Data connection settings</div>
       <div class="settings-box" id="settingsBox">
         <label>Supabase project URL</label>
@@ -117,6 +132,7 @@
 
 <script>
   const BC_SEARCH_NAME = "Boston College";
+  const SWING_CODES = new Set(['SS', 'F', 'IP']);
   let currentTeamId = null, currentTeamName = null;
 
   const urlInput = document.getElementById('url');
@@ -305,6 +321,137 @@
           <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
         </table>
         <div class="section-label">Location (Heart / Shadow / Chase / Waste)</div>
+        <table class="stat-table">
+          <tr><th>Zone</th><th>Count</th><th>%</th></tr>
+          ${Object.entries(byZone).map(([z,c]) => `<tr><td>${z}</td><td>${c}</td><td>${zoneKnown ? (c/zoneKnown*100).toFixed(1) : '0.0'}%</td></tr>`).join('')}
+        </table>
+      `;
+    } catch (e) {
+      detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
+    }
+  }
+
+  // ---- Player search: queries the `players` view (migration 007),
+  // which collapses pitcher_id/pitcher and batter_id/batter across all
+  // of pitches into one row per distinct player+role. A player who both
+  // pitches and hits (a two-way player) will show up twice, once per
+  // role -- that's intentional, not a duplicate bug. ----
+  let playerDebounce = null;
+  document.getElementById('playerSearch').addEventListener('input', (e) => {
+    clearTimeout(playerDebounce);
+    const q = e.target.value.trim();
+    const results = document.getElementById('playerResults');
+    if (q.length < 2) { results.innerHTML = ''; return; }
+    playerDebounce = setTimeout(() => searchPlayers(q), 300);
+  });
+
+  async function searchPlayers(q){
+    const results = document.getElementById('playerResults');
+    try {
+      const url = `${apiBase()}/rest/v1/players?select=player_id,player_name,team_id,role&player_name=ilike.*${encodeURIComponent(q)}*&limit=20&order=player_name`;
+      const resp = await fetch(url, { headers: headers() });
+      if (!resp.ok) { results.innerHTML = `<div class="player-row" style="color:#c00;">HTTP ${resp.status} -- has migration 007 been run?</div>`; return; }
+      const players = await resp.json();
+      results.innerHTML = players.map(p =>
+        `<div class="player-row" data-id="${p.player_id}" data-name="${p.player_name}" data-role="${p.role}">
+           <span>${p.player_name}</span>
+           <span class="role-badge ${p.role === 'Pitcher' ? 'pitcher' : 'hitter'}">${p.role}</span>
+         </div>`
+      ).join('') || `<div class="player-row" style="cursor:default;color:#999;">No matches</div>`;
+      results.querySelectorAll('.player-row[data-id]').forEach(row => {
+        row.addEventListener('click', () => {
+          document.getElementById('playerSearch').value = '';
+          results.innerHTML = '';
+          const content = document.getElementById('tabContent');
+          if (row.dataset.role === 'Pitcher') {
+            renderPitcherDetail(row.dataset.id, row.dataset.name);
+          } else {
+            renderHitterDetail(row.dataset.id, row.dataset.name);
+          }
+        });
+      });
+    } catch (e) {
+      results.innerHTML = `<div class="player-row" style="color:#c00;">${e.message}</div>`;
+    }
+  }
+
+  // ---- Hitter detail: pitches seen, swing/take + whiff/chase, contact
+  // quality when the ball was actually in play, and the same Heart/
+  // Shadow/Chase/Waste breakdown built for pitchers -- same zone
+  // definitions, just describing what this hitter saw rather than what
+  // a pitcher threw. ----
+  async function renderHitterDetail(batterId, batterName){
+    const content = document.getElementById('tabContent');
+    const detailDiv = document.createElement('div');
+    detailDiv.className = 'pitcher-detail';
+    detailDiv.innerHTML = `<div class="status">Loading ${batterName}...</div>`;
+    content.appendChild(detailDiv);
+    detailDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    try {
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,pitch_call,exit_speed,angle,attack_zone&batter_id=eq.${encodeURIComponent(batterId)}&limit=3000`;
+      const resp = await fetch(url, { headers: headers() });
+      const rows = await resp.json();
+      if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
+
+      const games = new Set(rows.map(r => r.trackman_game_id)).size;
+      const total = rows.length;
+
+      let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0;
+      rows.forEach(r => {
+        if (r.pitch_call === 'B') balls++;
+        else if (r.pitch_call === 'SL') calledStrikes++;
+        else if (r.pitch_call === 'SS') swingingStrikes++;
+        else if (r.pitch_call === 'F') fouls++;
+        else if (r.pitch_call === 'IP') inPlay++;
+        else if (r.pitch_call === 'HBP') hbp++;
+      });
+      const swings = swingingStrikes + fouls + inPlay;
+      const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
+
+      // Chase%: of pitches OUTSIDE the zone (Chase/Waste), what fraction were swung at
+      const outsideZone = rows.filter(r => r.attack_zone === 'Chase' || r.attack_zone === 'Waste');
+      const outsideSwung = outsideZone.filter(r => SWING_CODES.has(r.pitch_call || '')).length;
+      const chasePct = outsideZone.length ? (outsideSwung / outsideZone.length * 100) : 0;
+
+      // Contact quality -- only rows where the ball was actually in play
+      const inPlayRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null);
+      const avgEV = inPlayRows.length ? inPlayRows.reduce((s,r) => s + r.exit_speed, 0) / inPlayRows.length : null;
+      const maxEV = inPlayRows.length ? Math.max(...inPlayRows.map(r => r.exit_speed)) : null;
+      const avgLA = inPlayRows.filter(r=>r.angle!=null).length
+        ? inPlayRows.filter(r=>r.angle!=null).reduce((s,r) => s + r.angle, 0) / inPlayRows.filter(r=>r.angle!=null).length : null;
+      const hardHitPct = inPlayRows.length ? (inPlayRows.filter(r => r.exit_speed >= 95).length / inPlayRows.length * 100) : null;
+
+      const byZone = { Heart: 0, Shadow: 0, Chase: 0, Waste: 0 };
+      let zoneKnown = 0;
+      rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
+
+      detailDiv.innerHTML = `
+        <span class="back-link" onclick="this.closest('.pitcher-detail').remove()">&larr; Close</span>
+        <div class="section-label" style="margin-top:0;">${batterName} — ${total} pitches seen / ${games} game(s)</div>
+        <table class="stat-table">
+          <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
+          <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
+          <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
+          <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
+          <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
+          <tr><td><b>Chase% (of pitches outside the zone)</b></td><td colspan="2">${chasePct.toFixed(1)}%</td></tr>
+        </table>
+        <div class="section-label">Contact Quality (balls in play)</div>
+        <table class="stat-table">
+          <tr><th>Balls In Play</th><th>Avg EV</th><th>Max EV</th><th>Avg Launch Angle</th><th>Hard Hit%</th></tr>
+          <tr>
+            <td>${inPlayRows.length}</td>
+            <td>${avgEV != null ? avgEV.toFixed(1) : '-'}</td>
+            <td>${maxEV != null ? maxEV.toFixed(1) : '-'}</td>
+            <td>${avgLA != null ? avgLA.toFixed(1) : '-'}</td>
+            <td>${hardHitPct != null ? hardHitPct.toFixed(1)+'%' : '-'}</td>
+          </tr>
+        </table>
+        <div class="section-label">Pitches Seen By Location (Heart / Shadow / Chase / Waste)</div>
         <table class="stat-table">
           <tr><th>Zone</th><th>Count</th><th>%</th></tr>
           ${Object.entries(byZone).map(([z,c]) => `<tr><td>${z}</td><td>${c}</td><td>${zoneKnown ? (c/zoneKnown*100).toFixed(1) : '0.0'}%</td></tr>`).join('')}
