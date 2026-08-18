@@ -23,6 +23,8 @@ import re
 import numpy as np
 import pandas as pd
 
+from sds_model import compute_sds
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "data")
 TEMPLATE_DIR = os.path.join(REPO_ROOT, "template")
@@ -95,6 +97,7 @@ def build():
     else:
         print(f"WARNING: {CALLED_STRIKE_FILE} not found — called_strike_prob will be blank")
         df["called_strike_prob"] = np.nan
+        ump = pd.DataFrame(columns=["PlateLocHeight", "PlateLocSide", "called_strike_prob"])
 
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df["Season"] = df["Date"].apply(season_label)
@@ -163,6 +166,24 @@ def build():
     df["OSCheck"] = df["TaggedPitchType"].isin(os_types)
     df["BBCheck"] = df["TaggedPitchType"].isin(bb_types)
     df["OffSpeedCheck"] = df["TaggedPitchType"].isin(os_types + bb_types)
+
+    # Count-state flags for the "Strike% By Count" pitching tab.
+    # NOTE: replicated exactly as written in the source R app (app.R), which
+    # defines these with OR logic (e.g. Balls==0 | Strikes==1 for "0-1") —
+    # that's how the original tool computes it, so it's kept as-is for parity.
+    b_str, s_str = df["Balls"].astype("Int64").astype(str), df["Strikes"].astype("Int64").astype(str)
+    df["Cnt01"] = (b_str == "0") | (s_str == "1")
+    df["Cnt10"] = (b_str == "1") | (s_str == "0")
+    df["Cnt11"] = (b_str == "1") | (s_str == "1")
+    df["Cnt02"] = (b_str == "0") | (s_str == "2")
+    df["Cnt12"] = (b_str == "1") | (s_str == "2")
+    df["Cnt22"] = (b_str == "2") | (s_str == "2")
+    df["Cnt20"] = (b_str == "2") | (s_str == "0")
+    df["Cnt21"] = (b_str == "2") | (s_str == "1")
+    df["Cnt30"] = (b_str == "3") | (s_str == "0")
+    df["Cnt31"] = (b_str == "3") | (s_str == "1")
+    df["CntFull"] = (df["Balls"] == 3) | (df["Strikes"] == 2)
+
 
     df["ABCheck"] = df["HCheck"].astype(int) + df["OutCheck"].astype(int) - df["SacCheck"].astype(int)
     df["PACheck"] = df["ABCheck"] + df["WalkCheck"].astype(int) + df["SacCheck"].astype(int)
@@ -242,17 +263,19 @@ def build():
     df["TaggedPitchType"] = df["TaggedPitchType"].replace({"TwoSeamFastBall": "TwoSeam"})
     df["PitchDisplay"] = df["TaggedPitchType"].replace({"FourSeamFastBall": "Fastball"})
 
-    df["ExitSpeedCategory"] = pd.cut(
-        df["ExitSpeed"], bins=[-1, 74.99, 94.99, 1000], labels=["0-74", "75-95", "95+"]
-    )
+    # (ExitSpeedCategory used to be computed here, but it was never actually
+    # included in the JSON export -- the frontend derives it from EV directly
+    # instead, so it's not needed in the pipeline at all.)
 
     print(f"Total rows: {len(df)}")
     print("Seasons found:", sorted(df["Season"].dropna().unique().tolist()))
 
-    export(df)
+    df, sds_league_mean, sds_league_sd = compute_sds(df, ump)
+
+    export(df, sds_league_mean, sds_league_sd)
 
 
-def export(df):
+def export(df, sds_league_mean=None, sds_league_sd=None):
     def r1(x):
         try:
             if pd.isna(x):
@@ -286,7 +309,14 @@ def export(df):
         "Single", "Double", "Triple", "HR", "Sac", "HBP", "SO", "BB", "LeadOff", "FP",
         "FBc", "OSc", "BBc", "OffSpeed",
         "AB", "PA", "IP", "HitProb", "Slug", "wOBA", "xwOBA", "HitCk",
+        # Pitching-specific raw metrics
+        "RelHeight", "RelSide", "Extension", "SpinRate", "SpinAxis", "VAA", "HAA", "OutsOnPlay", "RunsScored",
+        # Count-state flags (pitching "Strike% By Count" tab)
+        "Cnt01", "Cnt10", "Cnt11", "Cnt02", "Cnt12", "Cnt22", "Cnt20", "Cnt21", "Cnt30", "Cnt31", "CntFull",
+        # Swing Decision Score
+        "SDS", "AttackZone",
     ]
+
 
     rows = []
     for _, r in df.iterrows():
@@ -319,9 +349,18 @@ def export(df):
             b(r["IPCheck"]),
             n(r["HitProbabilityCheck"]), n(r["SluggingCheck"]), n(r["WOBACheck"]), n(r["xwOBACheck"]),
             n(r["HitCheck"]) if pd.notna(r["HitCheck"]) else None,
+            r1(r["RelHeight"]), r1(r["RelSide"]), r1(r["Extension"]), r1(r["SpinRate"]), r1(r["SpinAxis"]),
+            r1(r["VertApprAngle"]), r1(r["HorzApprAngle"]), r1(r["OutsOnPlay"]), r1(r["RunsScored"]),
+            b(r["Cnt01"]), b(r["Cnt10"]), b(r["Cnt11"]), b(r["Cnt02"]), b(r["Cnt12"]), b(r["Cnt22"]),
+            b(r["Cnt20"]), b(r["Cnt21"]), b(r["Cnt30"]), b(r["Cnt31"]), b(r["CntFull"]),
+            r1(r["SDS"]), s(r["AttackZone"]),
         ])
 
-    payload = {"cols": cols, "rows": rows, "team": TEAM}
+    payload = {
+        "cols": cols, "rows": rows, "team": TEAM,
+        "sdsLeagueMean": None if sds_league_mean is None or pd.isna(sds_league_mean) else round(float(sds_league_mean), 3),
+        "sdsLeagueSd": None if sds_league_sd is None or pd.isna(sds_league_sd) else round(float(sds_league_sd), 3),
+    }
     data_json = json.dumps(payload, separators=(",", ":"))
     print(f"data.json payload: {len(rows)} rows x {len(cols)} cols, {len(data_json)/1e6:.2f} MB")
 
@@ -333,8 +372,11 @@ def assemble_html(data_json):
         shell = f.read()
     with open(os.path.join(TEMPLATE_DIR, "app.js"), "r") as f:
         app_js = f.read()
+    with open(os.path.join(TEMPLATE_DIR, "logo_datauri.txt"), "r") as f:
+        logo_uri = f.read().strip()
 
     html = shell.replace("__DATA_JSON__", data_json)
+    html = html.replace("__LOGO_URI__", logo_uri)
     # __APP_JS__ replaced via function to avoid backslash/group-reference issues in app_js
     html = re.sub(r"__APP_JS__", lambda _: app_js, html, count=1)
 
