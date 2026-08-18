@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>D1 Explorer (prototype)</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { font-size: 20px; }
+  .setup { background: #f7f6f3; border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; margin-bottom: 20px; }
+  .setup input { width: 100%; padding: 6px; font-size: 13px; margin-top: 4px; box-sizing: border-box; }
+  .setup label { font-size: 12px; font-weight: 600; display: block; margin-top: 8px; }
+  #teamSearch { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
+  #teamResults { margin-top: 6px; border: 1px solid #ddd; border-radius: 4px; max-height: 260px; overflow-y: auto; }
+  .team-row { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee; font-size: 14px; }
+  .team-row:hover { background: #f0f0f0; }
+  .team-row:last-child { border-bottom: none; }
+  #selectedTeam { margin-top: 24px; }
+  #selectedTeam h2 { font-size: 16px; margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
+  th { background: #8C2232; color: white; }
+  .status { font-size: 12px; color: #666; margin-top: 8px; }
+  .empty { color: #888; font-style: italic; padding: 10px; }
+</style>
+</head>
+<body>
+  <h1>D1 Explorer — prototype</h1>
+
+  <div class="setup">
+    <label>Supabase project URL</label>
+    <input id="url" placeholder="https://xxxxxxxx.supabase.co">
+    <label>Public API key (sb_publishable_... or legacy anon eyJ...)</label>
+    <input id="key" placeholder="sb_publishable_... or eyJhbGci...">
+  </div>
+
+  <label for="teamSearch"><b>Search for a team</b></label>
+  <input id="teamSearch" placeholder="Start typing a team name..." autocomplete="off">
+  <div id="teamResults"></div>
+
+  <div id="selectedTeam"></div>
+
+<script>
+  const urlInput = document.getElementById('url');
+  const keyInput = document.getElementById('key');
+  urlInput.value = localStorage.getItem('d1_url') || '';
+  keyInput.value = localStorage.getItem('d1_key') || '';
+  urlInput.addEventListener('change', () => localStorage.setItem('d1_url', urlInput.value.trim()));
+  keyInput.addEventListener('change', () => localStorage.setItem('d1_key', keyInput.value.trim()));
+
+  function apiBase(){ return urlInput.value.trim().replace(/\/$/, ''); }
+  function headers(){ return { apikey: keyInput.value.trim() }; }
+
+  // ---- Live team search, debounced so we're not firing a query on every keystroke ----
+  let debounceTimer = null;
+  document.getElementById('teamSearch').addEventListener('input', (e) => {
+    clearTimeout(debounceTimer);
+    const q = e.target.value.trim();
+    const results = document.getElementById('teamResults');
+    if (!apiBase() || !keyInput.value.trim()) {
+      results.innerHTML = `<div class="empty">Fill in the project URL and key above first.</div>`;
+      return;
+    }
+    if (q.length < 2) { results.innerHTML = ''; return; }
+    debounceTimer = setTimeout(() => searchTeams(q), 300);
+  });
+
+  async function searchTeams(q){
+    const results = document.getElementById('teamResults');
+    results.innerHTML = `<div class="empty">Searching...</div>`;
+    try {
+      // ilike = case-insensitive partial match. %term% means "contains".
+      const url = `${apiBase()}/rest/v1/teams?select=team_id,team_name&team_name=ilike.*${encodeURIComponent(q)}*&limit=15&order=team_name`;
+      const resp = await fetch(url, { headers: headers() });
+      if (!resp.ok) { results.innerHTML = `<div class="empty">Error: HTTP ${resp.status} — ${await resp.text()}</div>`; return; }
+      const teams = await resp.json();
+      if (teams.length === 0) { results.innerHTML = `<div class="empty">No teams match "${q}".</div>`; return; }
+      results.innerHTML = teams.map(t =>
+        `<div class="team-row" data-id="${t.team_id}" data-name="${t.team_name}">${t.team_name}</div>`
+      ).join('');
+      results.querySelectorAll('.team-row').forEach(row => {
+        row.addEventListener('click', () => selectTeam(row.dataset.id, row.dataset.name));
+      });
+    } catch (e) {
+      results.innerHTML = `<div class="empty">${e.message}</div>`;
+    }
+  }
+
+  // ---- Once a team is picked: real pitcher list + pitch counts, live from the DB ----
+  async function selectTeam(teamId, teamName){
+    document.getElementById('teamSearch').value = teamName;
+    document.getElementById('teamResults').innerHTML = '';
+    const container = document.getElementById('selectedTeam');
+    container.innerHTML = `<h2>${teamName}</h2><div class="status">Loading pitchers...</div>`;
+
+    try {
+      // Pull pitcher name + pitch_call for this team's pitches, then
+      // aggregate client-side. Fine at prototype scale; once a team's
+      // pitch count gets large this aggregation should move server-side
+      // (a Postgres view or an RPC function) instead of shipping every
+      // row to the browser -- a note for the real rewrite, not a
+      // problem with this proof-of-concept specifically.
+      // Filtered by pitcher_team_id (a numeric team ID), not team name --
+      // team names are inconsistent between the teams table (mascot-
+      // style) and pitches (full school name from a different API
+      // field), so the ID is the only reliable join key. See migration
+      // 004 for the backfill this depends on.
+      const url = `${apiBase()}/rest/v1/pitches?select=pitcher,pitch_call&pitcher_team_id=eq.${encodeURIComponent(teamId)}&limit=5000`;
+      const resp = await fetch(url, { headers: headers() });
+      if (!resp.ok) { container.innerHTML += `<div class="status">Error: HTTP ${resp.status} — ${await resp.text()}</div>`; return; }
+      const rows = await resp.json();
+
+      if (rows.length === 0) {
+        container.innerHTML = `<h2>${teamName}</h2><div class="empty">No pitches ingested for this team yet -- the backfill may not have reached their games (or hasn't for pitching appearances specifically -- this only counts pitches this team's pitchers threw, not their hitters' at-bats).</div>`;
+        return;
+      }
+
+      const byPitcher = {};
+      rows.forEach(r => {
+        byPitcher[r.pitcher] = byPitcher[r.pitcher] || { pitches: 0, inPlay: 0 };
+        byPitcher[r.pitcher].pitches++;
+        if (r.pitch_call === 'IP') byPitcher[r.pitcher].inPlay++;
+      });
+      const sorted = Object.entries(byPitcher).sort((a,b) => b[1].pitches - a[1].pitches);
+
+      container.innerHTML = `
+        <h2>${teamName}</h2>
+        <div class="status">${rows.length} pitches loaded (capped at 5000 for this prototype) across ${sorted.length} pitcher(s)</div>
+        <table>
+          <tr><th>Pitcher</th><th>Pitches</th><th>Balls In Play</th></tr>
+          ${sorted.map(([name, s]) => `<tr><td>${name}</td><td>${s.pitches}</td><td>${s.inPlay}</td></tr>`).join('')}
+        </table>`;
+    } catch (e) {
+      container.innerHTML = `<h2>${teamName}</h2><div class="status">${e.message}</div>`;
+    }
+  }
+</script>
+</body>
+</html>
