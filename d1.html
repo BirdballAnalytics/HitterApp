@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Boston College Baseball</title>
+<style>
+  :root {
+    --maroon: #8C2232;
+    --maroon-dark: #6d1a27;
+    --gold: #DBCCA6;
+    --cream: #ede1d2;
+    --dark-bg: #10141a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Inter", system-ui, sans-serif;
+    background: var(--cream); color: #222;
+  }
+  .header-bar {
+    background: var(--maroon); color: white; padding: 14px 24px;
+    display: flex; align-items: center; gap: 14px;
+    border-bottom: 3px solid var(--gold);
+  }
+  .logo-chip {
+    width: 42px; height: 42px; border-radius: 8px; background: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; color: var(--maroon); font-size: 15px; flex: 0 0 auto;
+  }
+  .header-bar h1 {
+    font-size: 16px; letter-spacing: 0.08em; margin: 0; font-weight: 700;
+  }
+  .layout { display: flex; min-height: calc(100vh - 66px); }
+  .sidebar {
+    background: var(--maroon); color: var(--gold); width: 260px; flex: 0 0 auto;
+    padding: 20px 16px;
+  }
+  .sidebar label { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; margin-top: 16px; margin-bottom: 4px; color: var(--gold); }
+  .sidebar input { width: 100%; padding: 8px; font-size: 13px; border: none; border-radius: 4px; }
+  .sidebar-divider { border-top: 1px solid rgba(255,255,255,0.2); margin: 16px 0; }
+  #teamResults { margin-top: 4px; background: white; border-radius: 4px; max-height: 240px; overflow-y: auto; }
+  .team-row { padding: 7px 10px; cursor: pointer; font-size: 13px; color: #222; border-bottom: 1px solid #eee; }
+  .team-row:hover { background: var(--cream); }
+  .team-row:last-child { border-bottom: none; }
+  .current-team { background: rgba(255,255,255,0.12); border-radius: 6px; padding: 10px 12px; margin-top: 6px; }
+  .current-team .name { font-weight: 700; font-size: 15px; color: white; }
+  .current-team .sub { font-size: 11px; color: var(--gold); margin-top: 2px; }
+  .settings-toggle { font-size: 11px; color: var(--gold); opacity: 0.7; cursor: pointer; margin-top: 20px; text-decoration: underline; }
+  .settings-box { display: none; margin-top: 8px; }
+  .settings-box.open { display: block; }
+
+  .main { flex: 1; padding: 24px 32px; min-width: 0; }
+  .tabs-nav { display: flex; gap: 4px; border-bottom: 2px solid #ddd; margin-bottom: 20px; }
+  .tab-btn {
+    background: none; border: none; padding: 10px 16px; font-size: 13px; font-weight: 700;
+    letter-spacing: 0.04em; color: #888; cursor: pointer; border-bottom: 3px solid transparent;
+    text-transform: uppercase; font-family: inherit;
+  }
+  .tab-btn.active { color: var(--maroon); border-bottom-color: var(--maroon); }
+  .tab-btn:disabled { color: #ccc; cursor: default; }
+
+  .section-label {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    color: #8C2232; border-bottom: 1px solid #e0d5c5; padding-bottom: 4px; margin: 20px 0 8px;
+  }
+  .section-label:first-child { margin-top: 0; }
+  table.stat-table { width: 100%; border-collapse: collapse; background: white; font-size: 13px;
+    border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  table.stat-table th { background: var(--maroon); color: white; text-align: left; padding: 8px 12px; font-size: 12px; }
+  table.stat-table td { padding: 7px 12px; border-bottom: 1px solid #f0ece4; }
+  table.stat-table tr:last-child td { border-bottom: none; }
+  table.stat-table tr.clickable { cursor: pointer; }
+  table.stat-table tr.clickable:hover { background: var(--cream); }
+
+  .status { font-size: 12px; color: #888; margin: 6px 0 12px; }
+  .empty-msg { color: #999; font-style: italic; padding: 30px; text-align: center; }
+  .pitcher-detail { margin-top: 18px; padding: 16px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .back-link { font-size: 12px; color: var(--maroon); cursor: pointer; text-decoration: underline; margin-bottom: 10px; display: inline-block; }
+</style>
+</head>
+<body>
+  <div class="header-bar">
+    <div class="logo-chip">BC</div>
+    <h1 id="headerTitle">BOSTON COLLEGE BASEBALL</h1>
+  </div>
+
+  <div class="layout">
+    <div class="sidebar">
+      <div class="current-team">
+        <div class="name" id="currentTeamName">Boston College</div>
+        <div class="sub" id="currentTeamSub">loading...</div>
+      </div>
+
+      <label for="teamSearch">Switch team</label>
+      <input id="teamSearch" placeholder="Search any D1 team..." autocomplete="off">
+      <div id="teamResults"></div>
+
+      <div class="sidebar-divider"></div>
+      <div class="settings-toggle" onclick="toggleSettings()">Data connection settings</div>
+      <div class="settings-box" id="settingsBox">
+        <label>Supabase project URL</label>
+        <input id="url" placeholder="https://xxxxxxxx.supabase.co">
+        <label>Public API key</label>
+        <input id="key" placeholder="sb_publishable_...">
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="tabs-nav">
+        <button class="tab-btn active" data-tab="pitching">Pitching</button>
+        <button class="tab-btn" disabled title="Coming in a later pass">Hitting</button>
+        <button class="tab-btn" disabled title="Coming in a later pass">Scout</button>
+      </div>
+      <div id="tabContent"></div>
+    </div>
+  </div>
+
+<script>
+  const BC_SEARCH_NAME = "Boston College";
+  let currentTeamId = null, currentTeamName = null;
+
+  const urlInput = document.getElementById('url');
+  const keyInput = document.getElementById('key');
+  urlInput.value = localStorage.getItem('d1_url') || '';
+  keyInput.value = localStorage.getItem('d1_key') || '';
+  urlInput.addEventListener('input', () => localStorage.setItem('d1_url', urlInput.value.trim()));
+  keyInput.addEventListener('input', () => localStorage.setItem('d1_key', keyInput.value.trim()));
+
+  function apiBase(){ return urlInput.value.trim().replace(/\/$/, ''); }
+  function headers(){ return { apikey: keyInput.value.trim() }; }
+  function toggleSettings(){ document.getElementById('settingsBox').classList.toggle('open'); }
+
+  // ---- On load: find BC and select it as the default team ----
+  window.addEventListener('load', async () => {
+    if (!apiBase() || !keyInput.value.trim()) {
+      document.getElementById('currentTeamSub').textContent = 'Set up the data connection first (see sidebar)';
+      document.getElementById('settingsBox').classList.add('open');
+      return;
+    }
+    try {
+      const url = `${apiBase()}/rest/v1/teams?select=team_id,team_name&team_name=eq.${encodeURIComponent(BC_SEARCH_NAME)}&limit=1`;
+      const resp = await fetch(url, { headers: headers() });
+      const teams = await resp.json();
+      if (teams.length) {
+        selectTeam(teams[0].team_id, teams[0].team_name);
+      } else {
+        document.getElementById('currentTeamSub').textContent = `"${BC_SEARCH_NAME}" not found -- search for it manually`;
+      }
+    } catch (e) {
+      document.getElementById('currentTeamSub').textContent = e.message;
+    }
+  });
+
+  // ---- Live team search ----
+  let debounceTimer = null;
+  document.getElementById('teamSearch').addEventListener('input', (e) => {
+    clearTimeout(debounceTimer);
+    const q = e.target.value.trim();
+    const results = document.getElementById('teamResults');
+    if (q.length < 2) { results.innerHTML = ''; return; }
+    debounceTimer = setTimeout(() => searchTeams(q), 300);
+  });
+
+  async function searchTeams(q){
+    const results = document.getElementById('teamResults');
+    try {
+      const url = `${apiBase()}/rest/v1/teams?select=team_id,team_name&team_name=ilike.*${encodeURIComponent(q)}*&limit=12&order=team_name`;
+      const resp = await fetch(url, { headers: headers() });
+      const teams = await resp.json();
+      results.innerHTML = teams.map(t =>
+        `<div class="team-row" data-id="${t.team_id}" data-name="${t.team_name}">${t.team_name}</div>`
+      ).join('') || `<div class="team-row" style="cursor:default;color:#999;">No matches</div>`;
+      results.querySelectorAll('.team-row[data-id]').forEach(row => {
+        row.addEventListener('click', () => {
+          selectTeam(row.dataset.id, row.dataset.name);
+          document.getElementById('teamSearch').value = '';
+          results.innerHTML = '';
+        });
+      });
+    } catch (e) {
+      results.innerHTML = `<div class="team-row" style="color:#c00;">${e.message}</div>`;
+    }
+  }
+
+  function selectTeam(teamId, teamName){
+    currentTeamId = teamId; currentTeamName = teamName;
+    document.getElementById('currentTeamName').textContent = teamName;
+    document.getElementById('currentTeamSub').textContent = 'Loading...';
+    // BC keeps the header branding regardless of which team's data is being
+    // viewed -- this app's identity, not just whatever's currently selected.
+    renderPitchingTab();
+  }
+
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (btn.dataset.tab === 'pitching') renderPitchingTab();
+    });
+  });
+
+  // ---- Pitching tab: team pitcher list -> pitcher detail ----
+  async function renderPitchingTab(){
+    const content = document.getElementById('tabContent');
+    if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
+    content.innerHTML = `<div class="section-label" style="margin-top:0;">Pitching Staff</div><div id="pitcherList"><div class="status">Loading...</div></div>`;
+
+    try {
+      const url = `${apiBase()}/rest/v1/pitches?select=pitcher_id,pitcher,pitch_call&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`;
+      const resp = await fetch(url, { headers: headers() });
+      if (!resp.ok) { document.getElementById('pitcherList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
+      const rows = await resp.json();
+      document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
+
+      if (rows.length === 0) {
+        document.getElementById('pitcherList').innerHTML = `<div class="empty-msg">No pitches ingested for ${currentTeamName} yet -- the backfill may not have reached their games.</div>`;
+        return;
+      }
+
+      const byPitcher = {};
+      rows.forEach(r => {
+        byPitcher[r.pitcher_id] = byPitcher[r.pitcher_id] || { name: r.pitcher, pitches: 0, inPlay: 0 };
+        byPitcher[r.pitcher_id].pitches++;
+        if (r.pitch_call === 'IP') byPitcher[r.pitcher_id].inPlay++;
+      });
+      const sorted = Object.entries(byPitcher).sort((a,b) => b[1].pitches - a[1].pitches);
+
+      document.getElementById('pitcherList').innerHTML = `
+        <table class="stat-table">
+          <tr><th>Pitcher</th><th>Pitches</th><th>Balls In Play</th></tr>
+          ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}"><td>${s.name}</td><td>${s.pitches}</td><td>${s.inPlay}</td></tr>`).join('')}
+        </table>`;
+      document.querySelectorAll('#pitcherList tr[data-id]').forEach(row => {
+        row.addEventListener('click', () => renderPitcherDetail(row.dataset.id, row.dataset.name));
+      });
+    } catch (e) {
+      document.getElementById('pitcherList').innerHTML = `<div class="empty-msg">${e.message}</div>`;
+    }
+  }
+
+  async function renderPitcherDetail(pitcherId, pitcherName){
+    const content = document.getElementById('tabContent');
+    const detailDiv = document.createElement('div');
+    detailDiv.className = 'pitcher-detail';
+    detailDiv.innerHTML = `<div class="status">Loading ${pitcherName}...</div>`;
+    content.appendChild(detailDiv);
+    detailDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    try {
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,tagged_pitch_type,pitch_call,rel_speed,spin_rate,attack_zone&pitcher_id=eq.${encodeURIComponent(pitcherId)}&limit=3000`;
+      const resp = await fetch(url, { headers: headers() });
+      const rows = await resp.json();
+      if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
+
+      const games = new Set(rows.map(r => r.trackman_game_id)).size;
+      const byType = {};
+      rows.forEach(r => {
+        const t = r.tagged_pitch_type || 'Unknown';
+        byType[t] = byType[t] || { count: 0, veloSum: 0, veloN: 0, spinSum: 0, spinN: 0 };
+        byType[t].count++;
+        if (r.rel_speed != null) { byType[t].veloSum += r.rel_speed; byType[t].veloN++; }
+        if (r.spin_rate != null) { byType[t].spinSum += r.spin_rate; byType[t].spinN++; }
+      });
+      const mixRows = Object.entries(byType).sort((a,b) => b[1].count - a[1].count);
+      const total = rows.length;
+
+      let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0;
+      rows.forEach(r => {
+        if (r.pitch_call === 'B') balls++;
+        else if (r.pitch_call === 'SL') calledStrikes++;
+        else if (r.pitch_call === 'SS') swingingStrikes++;
+        else if (r.pitch_call === 'F') fouls++;
+        else if (r.pitch_call === 'IP') inPlay++;
+        else if (r.pitch_call === 'HBP') hbp++;
+      });
+      const swings = swingingStrikes + fouls + inPlay;
+      const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
+      const strikePct = (calledStrikes + swingingStrikes + fouls + inPlay) / total * 100;
+
+      const byZone = { Heart: 0, Shadow: 0, Chase: 0, Waste: 0 };
+      let zoneKnown = 0;
+      rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
+
+      detailDiv.innerHTML = `
+        <span class="back-link" onclick="this.closest('.pitcher-detail').remove()">&larr; Close</span>
+        <div class="section-label" style="margin-top:0;">${pitcherName} — ${total} pitches / ${games} game(s)</div>
+        <table class="stat-table">
+          <tr><th>Pitch Type</th><th>Count</th><th>%</th><th>Avg Velo</th><th>Avg Spin</th></tr>
+          ${mixRows.map(([type, s]) => `<tr>
+            <td>${type}</td><td>${s.count}</td><td>${(s.count/total*100).toFixed(1)}%</td>
+            <td>${s.veloN ? (s.veloSum/s.veloN).toFixed(1) : '-'}</td>
+            <td>${s.spinN ? Math.round(s.spinSum/s.spinN) : '-'}</td>
+          </tr>`).join('')}
+        </table>
+        <div class="section-label">Outcomes</div>
+        <table class="stat-table">
+          <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
+          <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
+          <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
+          <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
+          <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
+          <tr><td><b>Strike%</b></td><td colspan="2">${strikePct.toFixed(1)}%</td></tr>
+          <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
+        </table>
+        <div class="section-label">Location (Heart / Shadow / Chase / Waste)</div>
+        <table class="stat-table">
+          <tr><th>Zone</th><th>Count</th><th>%</th></tr>
+          ${Object.entries(byZone).map(([z,c]) => `<tr><td>${z}</td><td>${c}</td><td>${zoneKnown ? (c/zoneKnown*100).toFixed(1) : '0.0'}%</td></tr>`).join('')}
+        </table>
+      `;
+    } catch (e) {
+      detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
+    }
+  }
+</script>
+</body>
+</html>
