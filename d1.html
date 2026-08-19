@@ -146,9 +146,16 @@
   // to ~2. A visible range of +/-2.3 covers that with a little padding.
   const ZONE_RANGE = 2.3;
   const PITCH_COLORS = {
-    FA: '#e63946', FF: '#e63946', SI: '#f4a261', FT: '#f4a261', CT: '#e76f51', FC: '#e76f51',
-    SL: '#2a9d8f', CU: '#264653', CB: '#264653', KC: '#264653',
-    CH: '#8e44ad', SP: '#8e44ad', FS: '#8e44ad',
+    // Baseball Savant's official pitch-type colors (as posted by Tom
+    // Tango, MLB's senior data architect). A couple of the rarer codes
+    // (CU/KC/KN/SV/EP) weren't in that specific source, so those are
+    // filled in from a second, corroborating source reflecting the same
+    // Savant scheme -- flag it if any single color looks visibly off
+    // once you see it live, since Savant has revised this palette before.
+    FF: '#D22D49', FA: '#D22D49', FT: '#DE6A04', SI: '#FE9D00', FC: '#933F2C',
+    CH: '#1DBE3A', FS: '#3BACAC', SP: '#3BACAC', SC: '#60DB33', FO: '#55CCAB',
+    ST: '#DDB33A', SL: '#EEE716',
+    CU: '#3025CE', CB: '#3025CE', KC: '#311D8B', KN: '#867A08', SV: '#376748', EP: '#648FFF',
   };
   function pitchColor(type){ return PITCH_COLORS[(type||'').toUpperCase()] || '#999'; }
   function pitchFamily(type){
@@ -456,7 +463,7 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side&pitcher_id=eq.${encodeURIComponent(pitcherId)}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side,vert_appr_angle,horz_appr_angle&pitcher_id=eq.${encodeURIComponent(pitcherId)}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
@@ -536,26 +543,51 @@
     const byType = {};
     rows.forEach(r => {
       const t = r.tagged_pitch_type || 'Unknown';
-      byType[t] = byType[t] || { count:0, veloSum:0,veloN:0, spinSum:0,spinN:0, ivbSum:0,ivbN:0, hbSum:0,hbN:0 };
+      byType[t] = byType[t] || {
+        count:0, veloSum:0,veloN:0,veloMax:null, spinSum:0,spinN:0,spinMax:null,
+        ivbSum:0,ivbN:0, hbSum:0,hbN:0, vaaSum:0,vaaN:0, haaSum:0,haaN:0
+      };
       const s = byType[t];
       s.count++;
-      if (r.rel_speed!=null){ s.veloSum+=r.rel_speed; s.veloN++; }
-      if (r.spin_rate!=null){ s.spinSum+=r.spin_rate; s.spinN++; }
+      if (r.rel_speed!=null){ s.veloSum+=r.rel_speed; s.veloN++; s.veloMax = s.veloMax==null ? r.rel_speed : Math.max(s.veloMax, r.rel_speed); }
+      if (r.spin_rate!=null){ s.spinSum+=r.spin_rate; s.spinN++; s.spinMax = s.spinMax==null ? r.spin_rate : Math.max(s.spinMax, r.spin_rate); }
       if (r.induced_vert_break!=null){ s.ivbSum+=r.induced_vert_break; s.ivbN++; }
       if (r.horz_break!=null){ s.hbSum+=r.horz_break; s.hbN++; }
+      if (r.vert_appr_angle!=null){ s.vaaSum+=r.vert_appr_angle; s.vaaN++; }
+      if (r.horz_appr_angle!=null){ s.haaSum+=r.horz_appr_angle; s.haaN++; }
     });
     const mixRows = Object.entries(byType).sort((a,b)=>b[1].count-a[1].count);
+    const moveRows = rows.filter(r => r.induced_vert_break!=null && r.horz_break!=null);
+    const types = mixRows.map(([t])=>t);
     return `
       <table class="stat-table">
-        <tr><th>Pitch Type</th><th>Count</th><th>%</th><th>Avg Velo</th><th>Avg Spin</th><th>Avg IVB</th><th>Avg HB</th></tr>
+        <tr><th>Pitch Type</th><th>Count</th><th>%</th><th>Avg Velo</th><th>Max Velo</th><th>Avg Spin</th><th>Max Spin</th><th>IVB</th><th>HB</th><th>VAA</th><th>HAA</th></tr>
         ${mixRows.map(([type,s]) => `<tr>
           <td>${type}</td><td>${s.count}</td><td>${(s.count/total*100).toFixed(1)}%</td>
           <td>${s.veloN ? (s.veloSum/s.veloN).toFixed(1) : '-'}</td>
+          <td>${s.veloMax!=null ? s.veloMax.toFixed(1) : '-'}</td>
           <td>${s.spinN ? Math.round(s.spinSum/s.spinN) : '-'}</td>
+          <td>${s.spinMax!=null ? Math.round(s.spinMax) : '-'}</td>
           <td>${s.ivbN ? (s.ivbSum/s.ivbN).toFixed(1) : '-'}</td>
           <td>${s.hbN ? (s.hbSum/s.hbN).toFixed(1) : '-'}</td>
+          <td>${s.vaaN ? (s.vaaSum/s.vaaN).toFixed(1) : '-'}</td>
+          <td>${s.haaN ? (s.haaSum/s.haaN).toFixed(1) : '-'}</td>
         </tr>`).join('')}
-      </table>`;
+      </table>
+      <div class="section-label">Pitch Plot (movement: horizontal vs induced vertical break)</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>${moveRows.length ? axisScatterSVG(moveRows, {
+          xField:'horz_break', yField:'induced_vert_break', xMin:-25, xMax:25, yMin:-25, yMax:25,
+          xLabel:'Horizontal Break (in)', yLabel:'Induced Vertical Break (in)',
+          colorFn: r => pitchColor(r.tagged_pitch_type), width:280, height:280
+        }) : '<div class="empty-msg">No movement data.</div>'}</div>
+        <div style="display:flex;flex-direction:column;gap:6px;padding-top:8px;">
+          ${types.map(t => `<div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <span style="width:10px;height:10px;border-radius:50%;background:${pitchColor(t)};display:inline-block;"></span>${t}
+          </div>`).join('')}
+        </div>
+      </div>
+      <div class="status">VAA/HAA are the pitch's approach angle at the plate (vertical/horizontal). Pitch plot axes are centered at 0,0 (a spinless, gravity-only pitch) -- same convention Baseball Savant's movement charts use.</div>`;
   }
 
   function pitcherSubLocations(rows){
@@ -643,9 +675,9 @@
     return `
       <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
         <div>
-          <div style="font-size:12px;font-weight:700;margin-bottom:4px;">Release Point (side view: horizontal vs height)</div>
+          <div style="font-size:12px;font-weight:700;margin-bottom:4px;">Release Point (view: from behind the mound, looking toward home)</div>
           ${releaseRows.length ? axisScatterSVG(releaseRows, {
-            xField:'rel_side', yField:'rel_height', xMin:-4, xMax:4, yMin:3, yMax:8,
+            xField:'rel_side', yField:'rel_height', xMin:4, xMax:-4, yMin:3, yMax:8,
             xLabel:'Release Side (ft)', yLabel:'Release Height (ft)',
             colorFn: r => pitchColor(r.tagged_pitch_type), width:260, height:240
           }) : '<div class="empty-msg">No release point data.</div>'}
@@ -659,7 +691,8 @@
             <td>${s.extN ? (s.extSum/s.extN).toFixed(2) : '-'}</td>
           </tr>`).join('')}
         </table>
-      </div>`;
+      </div>
+      <div class="status">This view is mirrored from the plate-location charts elsewhere in this app (which show the catcher's-eye view) -- release side is flipped here to show what the pitcher themselves would see looking toward home plate.</div>`;
   }
 
   function pitcherSubCountStrike(rows){
