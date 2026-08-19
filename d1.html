@@ -116,8 +116,9 @@
       <div id="playerResults"></div>
 
       <div class="sidebar-divider"></div>
-      <div class="settings-toggle" onclick="toggleSettings()">Data connection settings</div>
+      <div class="settings-toggle" onclick="toggleSettings()">Advanced: change data source</div>
       <div class="settings-box" id="settingsBox">
+        <div style="font-size:11px;color:var(--gold);opacity:0.85;margin-bottom:6px;">Pre-configured -- only change this if you're pointing at a different database.</div>
         <label>Supabase project URL</label>
         <input id="url" placeholder="https://xxxxxxxx.supabase.co">
         <label>Public API key</label>
@@ -289,8 +290,16 @@
 
   const urlInput = document.getElementById('url');
   const keyInput = document.getElementById('key');
-  urlInput.value = localStorage.getItem('d1_url') || '';
-  keyInput.value = localStorage.getItem('d1_key') || '';
+  // Baked in so anyone opening this link sees real data immediately,
+  // with no setup required. Safe to embed: this is the public API key,
+  // not the database password -- row-level security (already configured
+  // on the database side) is what actually protects the data, not
+  // secrecy of this key. A saved override in localStorage (e.g. for
+  // testing against a different project) still takes priority if present.
+  const DEFAULT_SUPABASE_URL = 'https://vfdhdsjnngfymbpxtxlt.supabase.co';
+  const DEFAULT_SUPABASE_KEY = 'sb_publishable_aI4we_Qn9yp1xYjA6ysK3w_5A-s-Ok-';
+  urlInput.value = localStorage.getItem('d1_url') || DEFAULT_SUPABASE_URL;
+  keyInput.value = localStorage.getItem('d1_key') || DEFAULT_SUPABASE_KEY;
   urlInput.addEventListener('input', () => localStorage.setItem('d1_url', urlInput.value.trim()));
   keyInput.addEventListener('input', () => localStorage.setItem('d1_key', keyInput.value.trim()));
 
