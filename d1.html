@@ -123,8 +123,8 @@
     <div class="main">
       <div class="tabs-nav">
         <button class="tab-btn active" data-tab="pitching">Pitching</button>
-        <button class="tab-btn" disabled title="Coming in a later pass">Hitting</button>
-        <button class="tab-btn" disabled title="Coming in a later pass">Scout</button>
+        <button class="tab-btn" data-tab="hitting">Hitting</button>
+        <button class="tab-btn" disabled title="Not part of this rebuild yet">Scout</button>
       </div>
       <div id="tabContent"></div>
     </div>
@@ -134,6 +134,7 @@
   const BC_SEARCH_NAME = "Boston College";
   const SWING_CODES = new Set(['SS', 'F', 'IP']);
   let currentTeamId = null, currentTeamName = null;
+  let activeTab = 'pitching';
 
   const urlInput = document.getElementById('url');
   const keyInput = document.getElementById('key');
@@ -204,14 +205,22 @@
     document.getElementById('currentTeamSub').textContent = 'Loading...';
     // BC keeps the header branding regardless of which team's data is being
     // viewed -- this app's identity, not just whatever's currently selected.
-    renderPitchingTab();
+    renderActiveTab();
+  }
+
+  // Single dispatcher so switching teams always refreshes whichever tab is
+  // actually showing, instead of a hardcoded assumption of which one that is.
+  function renderActiveTab(){
+    if (activeTab === 'pitching') renderPitchingTab();
+    else if (activeTab === 'hitting') renderHittingTab();
   }
 
   document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      if (btn.dataset.tab === 'pitching') renderPitchingTab();
+      activeTab = btn.dataset.tab;
+      renderActiveTab();
     });
   });
 
@@ -254,13 +263,53 @@
     }
   }
 
+  async function renderHittingTab(){
+    const content = document.getElementById('tabContent');
+    if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
+    content.innerHTML = `<div class="section-label" style="margin-top:0;">Hitters</div><div id="hitterList"><div class="status">Loading...</div></div>`;
+
+    try {
+      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`;
+      const resp = await fetch(url, { headers: headers() });
+      if (!resp.ok) { document.getElementById('hitterList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
+      const rows = await resp.json();
+      document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
+
+      if (rows.length === 0) {
+        document.getElementById('hitterList').innerHTML = `<div class="empty-msg">No pitches ingested for ${currentTeamName} yet -- the backfill may not have reached their games.</div>`;
+        return;
+      }
+
+      const byHitter = {};
+      rows.forEach(r => {
+        byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, pitchesSeen: 0, inPlay: 0 };
+        byHitter[r.batter_id].pitchesSeen++;
+        if (r.pitch_call === 'IP') byHitter[r.batter_id].inPlay++;
+      });
+      const sorted = Object.entries(byHitter).sort((a,b) => b[1].pitchesSeen - a[1].pitchesSeen);
+
+      document.getElementById('hitterList').innerHTML = `
+        <table class="stat-table">
+          <tr><th>Hitter</th><th>Pitches Seen</th><th>Balls In Play</th></tr>
+          ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}"><td>${s.name}</td><td>${s.pitchesSeen}</td><td>${s.inPlay}</td></tr>`).join('')}
+        </table>`;
+      document.querySelectorAll('#hitterList tr[data-id]').forEach(row => {
+        row.addEventListener('click', () => renderHitterDetail(row.dataset.id, row.dataset.name));
+      });
+    } catch (e) {
+      document.getElementById('hitterList').innerHTML = `<div class="empty-msg">${e.message}</div>`;
+    }
+  }
+
   async function renderPitcherDetail(pitcherId, pitcherName){
     const content = document.getElementById('tabContent');
+    // Replaces the team list entirely rather than stacking below it --
+    // the team screen should genuinely go away while viewing one player.
+    content.innerHTML = '';
     const detailDiv = document.createElement('div');
     detailDiv.className = 'pitcher-detail';
     detailDiv.innerHTML = `<div class="status">Loading ${pitcherName}...</div>`;
     content.appendChild(detailDiv);
-    detailDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
     try {
       const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,tagged_pitch_type,pitch_call,rel_speed,spin_rate,attack_zone&pitcher_id=eq.${encodeURIComponent(pitcherId)}&limit=3000`;
@@ -298,7 +347,7 @@
       rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
 
       detailDiv.innerHTML = `
-        <span class="back-link" onclick="this.closest('.pitcher-detail').remove()">&larr; Close</span>
+        <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
         <div class="section-label" style="margin-top:0;">${pitcherName} — ${total} pitches / ${games} game(s)</div>
         <table class="stat-table">
           <tr><th>Pitch Type</th><th>Count</th><th>%</th><th>Avg Velo</th><th>Avg Spin</th></tr>
@@ -382,11 +431,11 @@
   // a pitcher threw. ----
   async function renderHitterDetail(batterId, batterName){
     const content = document.getElementById('tabContent');
+    content.innerHTML = '';
     const detailDiv = document.createElement('div');
     detailDiv.className = 'pitcher-detail';
     detailDiv.innerHTML = `<div class="status">Loading ${batterName}...</div>`;
     content.appendChild(detailDiv);
-    detailDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
     try {
       const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,pitch_call,exit_speed,angle,attack_zone&batter_id=eq.${encodeURIComponent(batterId)}&limit=3000`;
@@ -427,7 +476,7 @@
       rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
 
       detailDiv.innerHTML = `
-        <span class="back-link" onclick="this.closest('.pitcher-detail').remove()">&larr; Close</span>
+        <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
         <div class="section-label" style="margin-top:0;">${batterName} — ${total} pitches seen / ${games} game(s)</div>
         <table class="stat-table">
           <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
