@@ -86,6 +86,11 @@
   .empty-msg { color: #999; font-style: italic; padding: 30px; text-align: center; }
   .pitcher-detail { margin-top: 18px; padding: 16px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .back-link { font-size: 12px; color: var(--maroon); cursor: pointer; text-decoration: underline; margin-bottom: 10px; display: inline-block; }
+  .subtabs-nav { display: flex; gap: 4px; border-bottom: 1px solid #e0d5c5; margin: 10px 0 14px; flex-wrap: wrap; }
+  .subtab-btn { background: none; border: none; padding: 6px 12px; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase; color: #999; cursor: pointer;
+    border-bottom: 2px solid transparent; font-family: inherit; }
+  .subtab-btn.active { color: var(--maroon); border-bottom-color: var(--maroon); }
 </style>
 </head>
 <body>
@@ -133,6 +138,145 @@
 <script>
   const BC_SEARCH_NAME = "Boston College";
   const SWING_CODES = new Set(['SS', 'F', 'IP']);
+
+  // ---- Shared chart infrastructure (pure SVG, no external library) ----
+  // Coordinate system: plate_loc_height/plate_loc_side are confirmed
+  // normalized (0 = zone center, ~1 = zone edge -- NOT raw feet, unlike
+  // the old app's PlateLocHeight/PlateLocSide). Chase/Waste extend out
+  // to ~2. A visible range of +/-2.3 covers that with a little padding.
+  const ZONE_RANGE = 2.3;
+  const PITCH_COLORS = {
+    FA: '#e63946', FF: '#e63946', SI: '#f4a261', FT: '#f4a261', CT: '#e76f51', FC: '#e76f51',
+    SL: '#2a9d8f', CU: '#264653', CB: '#264653', KC: '#264653',
+    CH: '#8e44ad', SP: '#8e44ad', FS: '#8e44ad',
+  };
+  function pitchColor(type){ return PITCH_COLORS[(type||'').toUpperCase()] || '#999'; }
+  function pitchFamily(type){
+    const t = (type||'').toUpperCase();
+    if (['FA','FF','SI','FT','CT','FC'].includes(t)) return 'Fastball';
+    if (['SL','CU','CB','KC','SV'].includes(t)) return 'Breaking';
+    if (['CH','SP','FS'].includes(t)) return 'Offspeed';
+    return 'Other';
+  }
+
+  function zoneScatterSVG(rows, opts={}){
+    const w = opts.width || 260, h = opts.height || 280;
+    const sx = v => (v+ZONE_RANGE)/(2*ZONE_RANGE)*w;
+    const sy = v => h - (v+ZONE_RANGE)/(2*ZONE_RANGE)*h; // flip: +height means up
+    const zoneRect = `<rect x="${sx(-1).toFixed(1)}" y="${sy(1).toFixed(1)}" width="${(sx(1)-sx(-1)).toFixed(1)}" height="${(sy(-1)-sy(1)).toFixed(1)}" fill="none" stroke="#444" stroke-width="1.5"/>`;
+    const dots = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null).map(r => {
+      const color = opts.colorFn ? opts.colorFn(r) : '#8C2232';
+      return `<circle cx="${sx(r.plate_loc_side).toFixed(1)}" cy="${sy(r.plate_loc_height).toFixed(1)}" r="4" fill="${color}" fill-opacity="0.72" stroke="white" stroke-width="0.6"/>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#fafafa;border-radius:6px;display:block;">${zoneRect}${dots}</svg>`;
+  }
+
+  function zoneHeatmapSVG(rows, opts={}){
+    const w = opts.width || 220, h = opts.height || 240;
+    const grid = 14;
+    const cellW = w/grid, cellH = h/grid;
+    const sx = v => (v+ZONE_RANGE)/(2*ZONE_RANGE)*w;
+    const sy = v => h - (v+ZONE_RANGE)/(2*ZONE_RANGE)*h;
+    const pts = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null);
+    const bins = new Array(grid*grid).fill(0);
+    pts.forEach(r => {
+      const bx = Math.min(grid-1, Math.max(0, Math.floor((r.plate_loc_side+ZONE_RANGE)/(2*ZONE_RANGE)*grid)));
+      const by = Math.min(grid-1, Math.max(0, Math.floor((h - (r.plate_loc_height+ZONE_RANGE)/(2*ZONE_RANGE)*h) / cellH)));
+      bins[by*grid+bx]++;
+    });
+    const maxBin = Math.max(1, ...bins);
+    const stops = [[0,'#1a1a2e'],[0.35,'#3d2b56'],[0.6,'#8C2232'],[0.8,'#e07a1f'],[1,'#ffd23f']];
+    function lerpHex(a,b,t){
+      const pa=[1,3,5].map(i=>parseInt(a.slice(i,i+2),16));
+      const pb=[1,3,5].map(i=>parseInt(b.slice(i,i+2),16));
+      const p=pa.map((v,i)=>Math.round(v+(pb[i]-v)*t));
+      return `rgb(${p[0]},${p[1]},${p[2]})`;
+    }
+    function heatColor(t){
+      for (let i=0;i<stops.length-1;i++){
+        if (t <= stops[i+1][0]) {
+          const [t0,c0]=stops[i], [t1,c1]=stops[i+1];
+          return lerpHex(c0,c1,(t-t0)/(t1-t0 || 1));
+        }
+      }
+      return stops[stops.length-1][1];
+    }
+    const blurId = `bh${Math.random().toString(36).slice(2,8)}`;
+    let cells = '';
+    for (let by=0; by<grid; by++){
+      for (let bx=0; bx<grid; bx++){
+        const t = bins[by*grid+bx] / maxBin;
+        if (t <= 0) continue;
+        cells += `<rect x="${(bx*cellW).toFixed(1)}" y="${(by*cellH).toFixed(1)}" width="${cellW.toFixed(1)}" height="${cellH.toFixed(1)}" fill="${heatColor(t)}"/>`;
+      }
+    }
+    const zoneRect = `<rect x="${sx(-1).toFixed(1)}" y="${sy(1).toFixed(1)}" width="${(sx(1)-sx(-1)).toFixed(1)}" height="${(sy(-1)-sy(1)).toFixed(1)}" fill="none" stroke="white" stroke-width="1.5" stroke-opacity="0.7"/>`;
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#10141a;border-radius:6px;display:block;">
+      <defs><filter id="${blurId}" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="${(cellW*0.55).toFixed(2)}"/></filter></defs>
+      <g filter="url(#${blurId})">${cells}</g>
+      ${zoneRect}
+    </svg>`;
+  }
+
+  // Generic scatter with explicit axes -- unlike zoneScatterSVG (which is
+  // locked to the normalized plate-location coordinate system), this
+  // takes arbitrary x/y fields and ranges, so it works for release
+  // points (feet), exit velo vs launch angle, or anything else with its
+  // own natural units.
+  function axisScatterSVG(rows, opts){
+    const w = opts.width || 260, h = opts.height || 240;
+    const pad = { l: 38, r: 12, t: 10, b: 26 };
+    const sx = v => pad.l + (v-opts.xMin)/(opts.xMax-opts.xMin)*(w-pad.l-pad.r);
+    const sy = v => h-pad.b - (v-opts.yMin)/(opts.yMax-opts.yMin)*(h-pad.t-pad.b);
+    const dots = rows.filter(r => r[opts.xField]!=null && r[opts.yField]!=null).map(r => {
+      const color = opts.colorFn ? opts.colorFn(r) : '#8C2232';
+      return `<circle cx="${sx(r[opts.xField]).toFixed(1)}" cy="${sy(r[opts.yField]).toFixed(1)}" r="3.5" fill="${color}" fill-opacity="0.65" stroke="white" stroke-width="0.5"/>`;
+    }).join('');
+    // 3 gridlines on each axis, simple tick labels
+    const xTicks = [0,0.5,1].map(t => opts.xMin + t*(opts.xMax-opts.xMin));
+    const yTicks = [0,0.5,1].map(t => opts.yMin + t*(opts.yMax-opts.yMin));
+    const gridX = xTicks.map(v => `<line x1="${sx(v).toFixed(1)}" y1="${pad.t}" x2="${sx(v).toFixed(1)}" y2="${h-pad.b}" stroke="#e5e5e5" stroke-width="1"/>
+      <text x="${sx(v).toFixed(1)}" y="${h-pad.b+14}" font-size="9" text-anchor="middle" fill="#888">${v.toFixed(0)}</text>`).join('');
+    const gridY = yTicks.map(v => `<line x1="${pad.l}" y1="${sy(v).toFixed(1)}" x2="${w-pad.r}" y2="${sy(v).toFixed(1)}" stroke="#e5e5e5" stroke-width="1"/>
+      <text x="${pad.l-6}" y="${(sy(v)+3).toFixed(1)}" font-size="9" text-anchor="end" fill="#888">${v.toFixed(0)}</text>`).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#fafafa;border-radius:6px;display:block;">
+      ${gridX}${gridY}${dots}
+      <text x="${w/2}" y="${h-4}" font-size="9" text-anchor="middle" fill="#666">${opts.xLabel||''}</text>
+      <text x="10" y="${h/2}" font-size="9" text-anchor="middle" fill="#666" transform="rotate(-90 10 ${h/2})">${opts.yLabel||''}</text>
+    </svg>`;
+  }
+
+  // Simple multi-series line chart for time-series tabs (Velo/Strike% Over
+  // Time). series: [{label, color, points: [{x: 'YYYY-MM-DD', y: number}]}]
+  function lineChartSVG(series, opts={}){
+    const w = opts.width || 560, h = opts.height || 220;
+    const pad = { l: 42, r: 14, t: 14, b: 30 };
+    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.x)))].sort();
+    if (allDates.length === 0) return `<div class="empty-msg">No data to chart.</div>`;
+    const allY = series.flatMap(s => s.points.map(p => p.y));
+    let yMin = Math.min(...allY), yMax = Math.max(...allY);
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    const pad10 = (yMax-yMin)*0.1;
+    yMin -= pad10; yMax += pad10;
+    const sx = i => pad.l + (allDates.length>1 ? i/(allDates.length-1) : 0.5)*(w-pad.l-pad.r);
+    const sy = v => h-pad.b - (v-yMin)/(yMax-yMin)*(h-pad.t-pad.b);
+    const yTicks = [0,0.5,1].map(t => yMin + t*(yMax-yMin));
+    const gridY = yTicks.map(v => `<line x1="${pad.l}" y1="${sy(v).toFixed(1)}" x2="${w-pad.r}" y2="${sy(v).toFixed(1)}" stroke="#e5e5e5" stroke-width="1"/>
+      <text x="${pad.l-6}" y="${(sy(v)+3).toFixed(1)}" font-size="9" text-anchor="end" fill="#888">${v.toFixed(1)}</text>`).join('');
+    // show at most ~6 x-axis date labels to avoid crowding
+    const labelEvery = Math.max(1, Math.ceil(allDates.length/6));
+    const xLabels = allDates.map((d,i) => i % labelEvery === 0
+      ? `<text x="${sx(i).toFixed(1)}" y="${h-pad.b+14}" font-size="9" text-anchor="middle" fill="#888">${d.slice(5)}</text>` : '').join('');
+    const lines = series.map(s => {
+      const present = allDates.map((d,i) => ({i, p: s.points.find(p => p.x === d)})).filter(x => x.p);
+      const polyline = present.map(x => `${sx(x.i).toFixed(1)},${sy(x.p.y).toFixed(1)}`).join(' ');
+      const dots = present.map(x => `<circle cx="${sx(x.i).toFixed(1)}" cy="${sy(x.p.y).toFixed(1)}" r="2.5" fill="${s.color}"/>`).join('');
+      return `<polyline points="${polyline}" fill="none" stroke="${s.color}" stroke-width="2"/>${dots}`;
+    }).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#fafafa;border-radius:6px;display:block;">
+      ${gridY}${xLabels}${lines}
+    </svg>`;
+  }
   let currentTeamId = null, currentTeamName = null;
   let activeTab = 'pitching';
 
@@ -312,123 +456,282 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,tagged_pitch_type,pitch_call,rel_speed,spin_rate,attack_zone&pitcher_id=eq.${encodeURIComponent(pitcherId)}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side&pitcher_id=eq.${encodeURIComponent(pitcherId)}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
-
       const games = new Set(rows.map(r => r.trackman_game_id)).size;
-      const byType = {};
-      rows.forEach(r => {
-        const t = r.tagged_pitch_type || 'Unknown';
-        byType[t] = byType[t] || { count: 0, veloSum: 0, veloN: 0, spinSum: 0, spinN: 0 };
-        byType[t].count++;
-        if (r.rel_speed != null) { byType[t].veloSum += r.rel_speed; byType[t].veloN++; }
-        if (r.spin_rate != null) { byType[t].spinSum += r.spin_rate; byType[t].spinN++; }
-      });
-      const mixRows = Object.entries(byType).sort((a,b) => b[1].count - a[1].count);
-      const total = rows.length;
 
-      let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0;
-      rows.forEach(r => {
-        if (r.pitch_call === 'B') balls++;
-        else if (r.pitch_call === 'SL') calledStrikes++;
-        else if (r.pitch_call === 'SS') swingingStrikes++;
-        else if (r.pitch_call === 'F') fouls++;
-        else if (r.pitch_call === 'IP') inPlay++;
-        else if (r.pitch_call === 'HBP') hbp++;
-      });
-      const swings = swingingStrikes + fouls + inPlay;
-      const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
-      const strikePct = (calledStrikes + swingingStrikes + fouls + inPlay) / total * 100;
-
-      const byZone = { Heart: 0, Shadow: 0, Chase: 0, Waste: 0 };
-      let zoneKnown = 0;
-      rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
-
-      detailDiv.innerHTML = `
-        <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
-        <div class="section-label" style="margin-top:0;">${pitcherName} — ${total} pitches / ${games} game(s)</div>
-        <table class="stat-table">
-          <tr><th>Pitch Type</th><th>Count</th><th>%</th><th>Avg Velo</th><th>Avg Spin</th></tr>
-          ${mixRows.map(([type, s]) => `<tr>
-            <td>${type}</td><td>${s.count}</td><td>${(s.count/total*100).toFixed(1)}%</td>
-            <td>${s.veloN ? (s.veloSum/s.veloN).toFixed(1) : '-'}</td>
-            <td>${s.spinN ? Math.round(s.spinSum/s.spinN) : '-'}</td>
-          </tr>`).join('')}
-        </table>
-        <div class="section-label">Outcomes</div>
-        <table class="stat-table">
-          <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
-          <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
-          <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
-          <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
-          <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
-          <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
-          <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
-          <tr><td><b>Strike%</b></td><td colspan="2">${strikePct.toFixed(1)}%</td></tr>
-          <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
-        </table>
-        <div class="section-label">Location (Heart / Shadow / Chase / Waste)</div>
-        <table class="stat-table">
-          <tr><th>Zone</th><th>Count</th><th>%</th></tr>
-          ${Object.entries(byZone).map(([z,c]) => `<tr><td>${z}</td><td>${c}</td><td>${zoneKnown ? (c/zoneKnown*100).toFixed(1) : '0.0'}%</td></tr>`).join('')}
-        </table>
-      `;
+      const subtabs = [
+        { id: 'results', label: 'Results', render: pitcherSubResults },
+        { id: 'metrics', label: 'Metrics', render: pitcherSubMetrics },
+        { id: 'locations', label: 'Locations', render: pitcherSubLocations },
+        { id: 'heatmaps', label: 'Heat Maps', render: pitcherSubHeatmaps },
+        { id: 'split', label: 'Results By Split', render: pitcherSubSplit },
+        { id: 'release', label: 'Release/Extension', render: pitcherSubRelease },
+        { id: 'countstrike', label: 'Strike% By Count', render: pitcherSubCountStrike },
+        { id: 'izwhiff', label: 'IZ Whiff', render: pitcherSubIZWhiff },
+        { id: 'pchase', label: 'Chase', render: pitcherSubChase },
+        { id: 'velotime', label: 'Velo Over Time', render: pitcherSubVeloTime },
+        { id: 'stroverTime', label: 'Strike% Over Time', render: pitcherSubStrikeTime },
+      ];
+      let activeSub = 'results';
+      function renderShell(){
+        detailDiv.innerHTML = `
+          <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
+          <div class="section-label" style="margin-top:0;">${pitcherName} — ${rows.length} pitches / ${games} game(s)</div>
+          <div class="subtabs-nav">
+            ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+          </div>
+          <div id="subtabContent"></div>`;
+        detailDiv.querySelectorAll('.subtab-btn').forEach(btn => {
+          btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
+        });
+        document.getElementById('subtabContent').innerHTML = subtabs.find(t => t.id === activeSub).render(rows);
+      }
+      renderShell();
     } catch (e) {
       detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
     }
   }
 
-  // ---- Player search: queries the `players` view (migration 007),
-  // which collapses pitcher_id/pitcher and batter_id/batter across all
-  // of pitches into one row per distinct player+role. A player who both
-  // pitches and hits (a two-way player) will show up twice, once per
-  // role -- that's intentional, not a duplicate bug. ----
-  let playerDebounce = null;
-  document.getElementById('playerSearch').addEventListener('input', (e) => {
-    clearTimeout(playerDebounce);
-    const q = e.target.value.trim();
-    const results = document.getElementById('playerResults');
-    if (q.length < 2) { results.innerHTML = ''; return; }
-    playerDebounce = setTimeout(() => searchPlayers(q), 300);
-  });
-
-  async function searchPlayers(q){
-    const results = document.getElementById('playerResults');
-    try {
-      const url = `${apiBase()}/rest/v1/players?select=player_id,player_name,team_id,role&player_name=ilike.*${encodeURIComponent(q)}*&limit=20&order=player_name`;
-      const resp = await fetch(url, { headers: headers() });
-      if (!resp.ok) { results.innerHTML = `<div class="player-row" style="color:#c00;">HTTP ${resp.status} -- has migration 007 been run?</div>`; return; }
-      const players = await resp.json();
-      results.innerHTML = players.map(p =>
-        `<div class="player-row" data-id="${p.player_id}" data-name="${p.player_name}" data-role="${p.role}">
-           <span>${p.player_name}</span>
-           <span class="role-badge ${p.role === 'Pitcher' ? 'pitcher' : 'hitter'}">${p.role}</span>
-         </div>`
-      ).join('') || `<div class="player-row" style="cursor:default;color:#999;">No matches</div>`;
-      results.querySelectorAll('.player-row[data-id]').forEach(row => {
-        row.addEventListener('click', () => {
-          document.getElementById('playerSearch').value = '';
-          results.innerHTML = '';
-          const content = document.getElementById('tabContent');
-          if (row.dataset.role === 'Pitcher') {
-            renderPitcherDetail(row.dataset.id, row.dataset.name);
-          } else {
-            renderHitterDetail(row.dataset.id, row.dataset.name);
-          }
-        });
-      });
-    } catch (e) {
-      results.innerHTML = `<div class="player-row" style="color:#c00;">${e.message}</div>`;
-    }
+  function pitcherSubResults(rows){
+    const total = rows.length;
+    let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0;
+    rows.forEach(r => {
+      if (r.pitch_call === 'B') balls++;
+      else if (r.pitch_call === 'SL') calledStrikes++;
+      else if (r.pitch_call === 'SS') swingingStrikes++;
+      else if (r.pitch_call === 'F') fouls++;
+      else if (r.pitch_call === 'IP') inPlay++;
+      else if (r.pitch_call === 'HBP') hbp++;
+    });
+    const swings = swingingStrikes + fouls + inPlay;
+    const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
+    const strikePct = (calledStrikes + swingingStrikes + fouls + inPlay) / total * 100;
+    const byZone = { Heart: 0, Shadow: 0, Chase: 0, Waste: 0 };
+    let zoneKnown = 0;
+    rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
+    return `
+      <table class="stat-table">
+        <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
+        <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
+        <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
+        <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
+        <tr><td><b>Strike%</b></td><td colspan="2">${strikePct.toFixed(1)}%</td></tr>
+        <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
+      </table>
+      <div class="section-label">Location Summary (Heart / Shadow / Chase / Waste)</div>
+      <table class="stat-table">
+        <tr><th>Zone</th><th>Count</th><th>%</th></tr>
+        ${Object.entries(byZone).map(([z,c]) => `<tr><td>${z}</td><td>${c}</td><td>${zoneKnown ? (c/zoneKnown*100).toFixed(1) : '0.0'}%</td></tr>`).join('')}
+      </table>`;
   }
 
-  // ---- Hitter detail: pitches seen, swing/take + whiff/chase, contact
-  // quality when the ball was actually in play, and the same Heart/
-  // Shadow/Chase/Waste breakdown built for pitchers -- same zone
-  // definitions, just describing what this hitter saw rather than what
-  // a pitcher threw. ----
+  function pitcherSubMetrics(rows){
+    const total = rows.length;
+    const byType = {};
+    rows.forEach(r => {
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || { count:0, veloSum:0,veloN:0, spinSum:0,spinN:0, ivbSum:0,ivbN:0, hbSum:0,hbN:0 };
+      const s = byType[t];
+      s.count++;
+      if (r.rel_speed!=null){ s.veloSum+=r.rel_speed; s.veloN++; }
+      if (r.spin_rate!=null){ s.spinSum+=r.spin_rate; s.spinN++; }
+      if (r.induced_vert_break!=null){ s.ivbSum+=r.induced_vert_break; s.ivbN++; }
+      if (r.horz_break!=null){ s.hbSum+=r.horz_break; s.hbN++; }
+    });
+    const mixRows = Object.entries(byType).sort((a,b)=>b[1].count-a[1].count);
+    return `
+      <table class="stat-table">
+        <tr><th>Pitch Type</th><th>Count</th><th>%</th><th>Avg Velo</th><th>Avg Spin</th><th>Avg IVB</th><th>Avg HB</th></tr>
+        ${mixRows.map(([type,s]) => `<tr>
+          <td>${type}</td><td>${s.count}</td><td>${(s.count/total*100).toFixed(1)}%</td>
+          <td>${s.veloN ? (s.veloSum/s.veloN).toFixed(1) : '-'}</td>
+          <td>${s.spinN ? Math.round(s.spinSum/s.spinN) : '-'}</td>
+          <td>${s.ivbN ? (s.ivbSum/s.ivbN).toFixed(1) : '-'}</td>
+          <td>${s.hbN ? (s.hbSum/s.hbN).toFixed(1) : '-'}</td>
+        </tr>`).join('')}
+      </table>`;
+  }
+
+  function pitcherSubLocations(rows){
+    const byType = {};
+    rows.forEach(r => { const t=r.tagged_pitch_type||'Unknown'; byType[t]=(byType[t]||0)+1; });
+    const types = Object.keys(byType).sort((a,b)=>byType[b]-byType[a]);
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>${zoneScatterSVG(rows, {colorFn: r => pitchColor(r.tagged_pitch_type)})}</div>
+        <div style="display:flex;flex-direction:column;gap:6px;padding-top:8px;">
+          ${types.map(t => `<div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <span style="width:10px;height:10px;border-radius:50%;background:${pitchColor(t)};display:inline-block;"></span>
+            ${t} (${byType[t]})
+          </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  function pitcherSubHeatmaps(rows){
+    const families = ['Fastball','Breaking','Offspeed'];
+    const byFamily = {};
+    families.forEach(f => byFamily[f] = rows.filter(r => pitchFamily(r.tagged_pitch_type) === f));
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        ${families.map(f => `
+          <div style="width:200px;">
+            <div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">${f} (n=${byFamily[f].length})</div>
+            ${byFamily[f].length ? zoneHeatmapSVG(byFamily[f], {width:200,height:210}) : '<div class="empty-msg" style="padding:60px 10px;">No pitches</div>'}
+          </div>`).join('')}
+      </div>
+      <div class="status">Pitch families are grouped from tagged_pitch_type (Fastball: FA/FF/SI/FT/CT/FC, Breaking: SL/CU/CB/KC, Offspeed: CH/SP/FS) -- an approximation, since the API doesn't provide a pre-grouped family field.</div>`;
+  }
+
+  function pitcherSubSplit(rows){
+    function outcomeBlock(sub, label){
+      const total = sub.length;
+      if (total === 0) return `<div class="empty-msg" style="padding:16px;">No pitches vs ${label}</div>`;
+      let calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, balls=0;
+      sub.forEach(r => {
+        if (r.pitch_call==='B') balls++;
+        else if (r.pitch_call==='SL') calledStrikes++;
+        else if (r.pitch_call==='SS') swingingStrikes++;
+        else if (r.pitch_call==='F') fouls++;
+        else if (r.pitch_call==='IP') inPlay++;
+      });
+      const strikePct = (calledStrikes+swingingStrikes+fouls+inPlay)/total*100;
+      const swings = swingingStrikes+fouls+inPlay;
+      const whiffPct = swings ? swingingStrikes/swings*100 : 0;
+      return `
+        <div style="flex:1;min-width:220px;">
+          <div style="font-size:12px;font-weight:700;margin-bottom:4px;">vs ${label} (n=${total})</div>
+          <table class="stat-table">
+            <tr><th>Metric</th><th>Value</th></tr>
+            <tr><td>Strike%</td><td>${strikePct.toFixed(1)}%</td></tr>
+            <tr><td>Whiff% (of swings)</td><td>${whiffPct.toFixed(1)}%</td></tr>
+            <tr><td>Ball%</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
+            <tr><td>In Play%</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
+          </table>
+        </div>`;
+    }
+    const vsL = rows.filter(r => r.batter_side === 'L');
+    const vsR = rows.filter(r => r.batter_side === 'R');
+    const unknown = rows.length - vsL.length - vsR.length;
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        ${outcomeBlock(vsL, 'LHH')}
+        ${outcomeBlock(vsR, 'RHH')}
+      </div>
+      ${unknown ? `<div class="status">${unknown} pitch(es) have no recorded batter_side and aren't included in either split.</div>` : ''}`;
+  }
+
+  function pitcherSubRelease(rows){
+    const byType = {};
+    rows.forEach(r => {
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || { count:0, rhSum:0,rhN:0, rsSum:0,rsN:0, extSum:0,extN:0 };
+      const s = byType[t];
+      s.count++;
+      if (r.rel_height!=null){ s.rhSum+=r.rel_height; s.rhN++; }
+      if (r.rel_side!=null){ s.rsSum+=r.rel_side; s.rsN++; }
+      if (r.extension!=null){ s.extSum+=r.extension; s.extN++; }
+    });
+    const typeRows = Object.entries(byType).sort((a,b)=>b[1].count-a[1].count);
+    const releaseRows = rows.filter(r => r.rel_side!=null && r.rel_height!=null);
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>
+          <div style="font-size:12px;font-weight:700;margin-bottom:4px;">Release Point (side view: horizontal vs height)</div>
+          ${releaseRows.length ? axisScatterSVG(releaseRows, {
+            xField:'rel_side', yField:'rel_height', xMin:-4, xMax:4, yMin:3, yMax:8,
+            xLabel:'Release Side (ft)', yLabel:'Release Height (ft)',
+            colorFn: r => pitchColor(r.tagged_pitch_type), width:260, height:240
+          }) : '<div class="empty-msg">No release point data.</div>'}
+        </div>
+        <table class="stat-table" style="flex:1;min-width:280px;">
+          <tr><th>Pitch Type</th><th>Count</th><th>Avg Rel Height</th><th>Avg Rel Side</th><th>Avg Extension</th></tr>
+          ${typeRows.map(([type,s]) => `<tr>
+            <td>${type}</td><td>${s.count}</td>
+            <td>${s.rhN ? (s.rhSum/s.rhN).toFixed(2) : '-'}</td>
+            <td>${s.rsN ? (s.rsSum/s.rsN).toFixed(2) : '-'}</td>
+            <td>${s.extN ? (s.extSum/s.extN).toFixed(2) : '-'}</td>
+          </tr>`).join('')}
+        </table>
+      </div>`;
+  }
+
+  function pitcherSubCountStrike(rows){
+    const counts = {};
+    rows.forEach(r => {
+      if (r.balls==null || r.strikes==null) return;
+      const key = `${r.balls}-${r.strikes}`;
+      counts[key] = counts[key] || { count:0, strikes:0 };
+      counts[key].count++;
+      if (SWING_CODES.has(r.pitch_call||'') || r.pitch_call==='SL') counts[key].strikes++;
+    });
+    const order = ['0-0','1-0','0-1','2-0','1-1','0-2','3-0','2-1','1-2','3-1','2-2','3-2'];
+    const present = order.filter(k => counts[k]);
+    return `
+      <table class="stat-table">
+        <tr><th>Count</th><th>Pitches</th><th>Strike%</th></tr>
+        ${present.map(k => `<tr><td>${k}</td><td>${counts[k].count}</td><td>${(counts[k].strikes/counts[k].count*100).toFixed(1)}%</td></tr>`).join('')}
+      </table>
+      <div class="status">Strike% here counts called strikes, swinging strikes, fouls, and balls in play as strikes -- same definition used throughout this app's Strike% figures.</div>`;
+  }
+
+  function pitcherSubIZWhiff(rows){
+    const whiffs = rows.filter(r => r.pitch_call === 'SS');
+    return `
+      <div class="section-label" style="margin-top:0;">Swinging Strikes Induced (n=${whiffs.length})</div>
+      ${whiffs.length ? zoneHeatmapSVG(whiffs, {width:260,height:280}) : '<div class="empty-msg">No swinging strikes recorded.</div>'}`;
+  }
+
+  function pitcherSubChase(rows){
+    const chased = rows.filter(r => (r.attack_zone==='Chase' || r.attack_zone==='Waste') && SWING_CODES.has(r.pitch_call||''));
+    return `
+      <div class="section-label" style="margin-top:0;">Chases Induced (batter swung, pitch outside the zone) — n=${chased.length}</div>
+      ${chased.length ? zoneHeatmapSVG(chased, {width:260,height:280}) : '<div class="empty-msg">No chases induced.</div>'}`;
+  }
+
+  function pitcherSubVeloTime(rows){
+    const byType = {};
+    rows.forEach(r => {
+      if (r.date==null || r.rel_speed==null) return;
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || {};
+      byType[t][r.date] = byType[t][r.date] || { sum:0, n:0 };
+      byType[t][r.date].sum += r.rel_speed;
+      byType[t][r.date].n++;
+    });
+    const types = Object.keys(byType).sort((a,b) => Object.values(byType[b]).reduce((s,d)=>s+d.n,0) - Object.values(byType[a]).reduce((s,d)=>s+d.n,0)).slice(0,4);
+    const series = types.map(t => ({
+      label: t, color: pitchColor(t),
+      points: Object.entries(byType[t]).map(([date,d]) => ({x:date, y:d.sum/d.n})).sort((a,b)=>a.x.localeCompare(b.x))
+    }));
+    return `
+      ${lineChartSVG(series, {width:580, height:220})}
+      <div class="chip-legend" style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;">
+        ${series.map(s => `<span style="display:flex;align-items:center;gap:4px;font-size:12px;">
+          <span style="width:10px;height:10px;border-radius:50%;background:${s.color};display:inline-block;"></span>${s.label}
+        </span>`).join('')}
+      </div>
+      <div class="status">Top 4 most-thrown pitch types shown, one point per date (average velo that day).</div>`;
+  }
+
+  function pitcherSubStrikeTime(rows){
+    const byDate = {};
+    rows.forEach(r => {
+      if (r.date==null) return;
+      byDate[r.date] = byDate[r.date] || { count:0, strikes:0 };
+      byDate[r.date].count++;
+      if (SWING_CODES.has(r.pitch_call||'') || r.pitch_call==='SL') byDate[r.date].strikes++;
+    });
+    const points = Object.entries(byDate).map(([date,d]) => ({x:date, y:d.strikes/d.count*100})).sort((a,b)=>a.x.localeCompare(b.x));
+    return lineChartSVG([{label:'Strike%', color:'#8C2232', points}], {width:580, height:220});
+  }
+
   async function renderHitterDetail(batterId, batterName){
     const content = document.getElementById('tabContent');
     content.innerHTML = '';
@@ -438,77 +741,188 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,pitch_call,exit_speed,angle,attack_zone&batter_id=eq.${encodeURIComponent(batterId)}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitch_call,exit_speed,angle,plate_loc_side,plate_loc_height,attack_zone,balls,strikes&batter_id=eq.${encodeURIComponent(batterId)}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
-
       const games = new Set(rows.map(r => r.trackman_game_id)).size;
-      const total = rows.length;
 
-      let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0;
-      rows.forEach(r => {
-        if (r.pitch_call === 'B') balls++;
-        else if (r.pitch_call === 'SL') calledStrikes++;
-        else if (r.pitch_call === 'SS') swingingStrikes++;
-        else if (r.pitch_call === 'F') fouls++;
-        else if (r.pitch_call === 'IP') inPlay++;
-        else if (r.pitch_call === 'HBP') hbp++;
-      });
-      const swings = swingingStrikes + fouls + inPlay;
-      const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
-
-      // Chase%: of pitches OUTSIDE the zone (Chase/Waste), what fraction were swung at
-      const outsideZone = rows.filter(r => r.attack_zone === 'Chase' || r.attack_zone === 'Waste');
-      const outsideSwung = outsideZone.filter(r => SWING_CODES.has(r.pitch_call || '')).length;
-      const chasePct = outsideZone.length ? (outsideSwung / outsideZone.length * 100) : 0;
-
-      // Contact quality -- only rows where the ball was actually in play
-      const inPlayRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null);
-      const avgEV = inPlayRows.length ? inPlayRows.reduce((s,r) => s + r.exit_speed, 0) / inPlayRows.length : null;
-      const maxEV = inPlayRows.length ? Math.max(...inPlayRows.map(r => r.exit_speed)) : null;
-      const avgLA = inPlayRows.filter(r=>r.angle!=null).length
-        ? inPlayRows.filter(r=>r.angle!=null).reduce((s,r) => s + r.angle, 0) / inPlayRows.filter(r=>r.angle!=null).length : null;
-      const hardHitPct = inPlayRows.length ? (inPlayRows.filter(r => r.exit_speed >= 95).length / inPlayRows.length * 100) : null;
-
-      const byZone = { Heart: 0, Shadow: 0, Chase: 0, Waste: 0 };
-      let zoneKnown = 0;
-      rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
-
-      detailDiv.innerHTML = `
-        <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
-        <div class="section-label" style="margin-top:0;">${batterName} — ${total} pitches seen / ${games} game(s)</div>
-        <table class="stat-table">
-          <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
-          <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
-          <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
-          <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
-          <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
-          <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
-          <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
-          <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
-          <tr><td><b>Chase% (of pitches outside the zone)</b></td><td colspan="2">${chasePct.toFixed(1)}%</td></tr>
-        </table>
-        <div class="section-label">Contact Quality (balls in play)</div>
-        <table class="stat-table">
-          <tr><th>Balls In Play</th><th>Avg EV</th><th>Max EV</th><th>Avg Launch Angle</th><th>Hard Hit%</th></tr>
-          <tr>
-            <td>${inPlayRows.length}</td>
-            <td>${avgEV != null ? avgEV.toFixed(1) : '-'}</td>
-            <td>${maxEV != null ? maxEV.toFixed(1) : '-'}</td>
-            <td>${avgLA != null ? avgLA.toFixed(1) : '-'}</td>
-            <td>${hardHitPct != null ? hardHitPct.toFixed(1)+'%' : '-'}</td>
-          </tr>
-        </table>
-        <div class="section-label">Pitches Seen By Location (Heart / Shadow / Chase / Waste)</div>
-        <table class="stat-table">
-          <tr><th>Zone</th><th>Count</th><th>%</th></tr>
-          ${Object.entries(byZone).map(([z,c]) => `<tr><td>${z}</td><td>${c}</td><td>${zoneKnown ? (c/zoneKnown*100).toFixed(1) : '0.0'}%</td></tr>`).join('')}
-        </table>
-      `;
+      const subtabs = [
+        { id: 'overview', label: 'Overview', render: hitterSubOverview },
+        { id: 'exitvelo', label: 'Exit Velo', render: hitterSubExitVelo },
+        { id: 'izwhiff', label: 'IZ Whiff', render: hitterSubIZWhiff },
+        { id: 'chase', label: 'Chase', render: hitterSubChase },
+        { id: 'evcharts', label: 'Exit Velo Charts', render: hitterSubEVCharts },
+        { id: 'swingdec', label: 'Swing Decisions', render: hitterSubSwingDecisions },
+        { id: 'takes', label: 'Takes', render: hitterSubTakes },
+        { id: 'approach', label: 'Approach By Count', render: hitterSubApproachByCount },
+      ];
+      let activeSub = 'overview';
+      function renderShell(){
+        detailDiv.innerHTML = `
+          <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
+          <div class="section-label" style="margin-top:0;">${batterName} — ${rows.length} pitches seen / ${games} game(s)</div>
+          <div class="subtabs-nav">
+            ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+          </div>
+          <div id="subtabContent"></div>`;
+        detailDiv.querySelectorAll('.subtab-btn').forEach(btn => {
+          btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
+        });
+        document.getElementById('subtabContent').innerHTML = subtabs.find(t => t.id === activeSub).render(rows);
+      }
+      renderShell();
     } catch (e) {
       detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
     }
+  }
+
+  function hitterSubOverview(rows){
+    const total = rows.length;
+    let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0;
+    rows.forEach(r => {
+      if (r.pitch_call === 'B') balls++;
+      else if (r.pitch_call === 'SL') calledStrikes++;
+      else if (r.pitch_call === 'SS') swingingStrikes++;
+      else if (r.pitch_call === 'F') fouls++;
+      else if (r.pitch_call === 'IP') inPlay++;
+      else if (r.pitch_call === 'HBP') hbp++;
+    });
+    const swings = swingingStrikes + fouls + inPlay;
+    const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
+    const outsideZone = rows.filter(r => r.attack_zone === 'Chase' || r.attack_zone === 'Waste');
+    const outsideSwung = outsideZone.filter(r => SWING_CODES.has(r.pitch_call || '')).length;
+    const chasePct = outsideZone.length ? (outsideSwung / outsideZone.length * 100) : 0;
+    return `
+      <table class="stat-table">
+        <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
+        <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
+        <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
+        <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
+        <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
+        <tr><td><b>Chase% (of pitches outside the zone)</b></td><td colspan="2">${chasePct.toFixed(1)}%</td></tr>
+      </table>`;
+  }
+
+  function hitterSubExitVelo(rows){
+    const inPlayRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null);
+    const avgEV = inPlayRows.length ? inPlayRows.reduce((s,r)=>s+r.exit_speed,0)/inPlayRows.length : null;
+    const maxEV = inPlayRows.length ? Math.max(...inPlayRows.map(r=>r.exit_speed)) : null;
+    const laRows = inPlayRows.filter(r=>r.angle!=null);
+    const avgLA = laRows.length ? laRows.reduce((s,r)=>s+r.angle,0)/laRows.length : null;
+    const hardHitPct = inPlayRows.length ? (inPlayRows.filter(r=>r.exit_speed>=95).length/inPlayRows.length*100) : null;
+    const gb = laRows.filter(r=>r.angle<10).length;
+    const ld = laRows.filter(r=>r.angle>=10 && r.angle<25).length;
+    const fb = laRows.filter(r=>r.angle>=25 && r.angle<50).length;
+    const pu = laRows.filter(r=>r.angle>=50).length;
+    return `
+      <table class="stat-table">
+        <tr><th>Balls In Play</th><th>Avg EV</th><th>Max EV</th><th>Avg Launch Angle</th><th>Hard Hit%</th></tr>
+        <tr>
+          <td>${inPlayRows.length}</td>
+          <td>${avgEV!=null?avgEV.toFixed(1):'-'}</td>
+          <td>${maxEV!=null?maxEV.toFixed(1):'-'}</td>
+          <td>${avgLA!=null?avgLA.toFixed(1):'-'}</td>
+          <td>${hardHitPct!=null?hardHitPct.toFixed(1)+'%':'-'}</td>
+        </tr>
+      </table>
+      <div class="section-label">Batted Ball Type (approximated from launch angle)</div>
+      <table class="stat-table">
+        <tr><th>Type</th><th>Angle Range</th><th>Count</th><th>%</th></tr>
+        <tr><td>Ground Ball</td><td>&lt;10°</td><td>${gb}</td><td>${laRows.length?(gb/laRows.length*100).toFixed(1):'0.0'}%</td></tr>
+        <tr><td>Line Drive</td><td>10-25°</td><td>${ld}</td><td>${laRows.length?(ld/laRows.length*100).toFixed(1):'0.0'}%</td></tr>
+        <tr><td>Fly Ball</td><td>25-50°</td><td>${fb}</td><td>${laRows.length?(fb/laRows.length*100).toFixed(1):'0.0'}%</td></tr>
+        <tr><td>Popup</td><td>&ge;50°</td><td>${pu}</td><td>${laRows.length?(pu/laRows.length*100).toFixed(1):'0.0'}%</td></tr>
+      </table>
+      <div class="status">Batted-ball type here is approximated from launch angle since the API doesn't provide a tagged hit-type field directly -- treat as directional, not exact.</div>`;
+  }
+
+  function hitterSubIZWhiff(rows){
+    const whiffs = rows.filter(r => r.pitch_call === 'SS');
+    return `
+      <div class="section-label" style="margin-top:0;">Swinging Strike Locations (n=${whiffs.length})</div>
+      ${whiffs.length ? zoneHeatmapSVG(whiffs, {width:260,height:280}) : '<div class="empty-msg">No swinging strikes recorded.</div>'}`;
+  }
+
+  function hitterSubChase(rows){
+    const chased = rows.filter(r => (r.attack_zone === 'Chase' || r.attack_zone === 'Waste') && SWING_CODES.has(r.pitch_call||''));
+    return `
+      <div class="section-label" style="margin-top:0;">Chased Pitches (swung at, outside the zone) — n=${chased.length}</div>
+      ${chased.length ? zoneHeatmapSVG(chased, {width:260,height:280}) : '<div class="empty-msg">No chased pitches recorded.</div>'}`;
+  }
+
+  function hitterSubEVCharts(rows){
+    const inPlayRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null && r.angle != null);
+    return `
+      <div class="section-label" style="margin-top:0;">Exit Velo vs Launch Angle (n=${inPlayRows.length})</div>
+      ${inPlayRows.length ? axisScatterSVG(inPlayRows, {
+        xField:'exit_speed', yField:'angle', xMin:50, xMax:115, yMin:-30, yMax:60,
+        xLabel:'Exit Velo (mph)', yLabel:'Launch Angle (°)',
+        colorFn: r => r.exit_speed >= 95 ? '#8C2232' : '#999', width:320, height:280
+      }) : '<div class="empty-msg">No balls in play with both EV and launch angle recorded.</div>'}
+      <div class="status">Dark red = hard-hit (95+ mph exit velo). No true spray/direction chart here -- the API doesn't provide batted-ball direction or distance, only exit velo and launch angle.</div>`;
+  }
+
+  function hitterSubSwingDecisions(rows){
+    return `
+      <div class="section-label" style="margin-top:0;">All Pitches Seen — Swing (maroon) vs Take (gray), n=${rows.length}</div>
+      ${zoneScatterSVG(rows, {
+        colorFn: r => SWING_CODES.has(r.pitch_call||'') ? '#8C2232' : '#999',
+        width: 300, height: 300
+      })}
+      <div class="chip-legend" style="display:flex;gap:12px;margin-top:8px;">
+        <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:10px;height:10px;border-radius:50%;background:#8C2232;display:inline-block;"></span>Swung</span>
+        <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:10px;height:10px;border-radius:50%;background:#999;display:inline-block;"></span>Took</span>
+      </div>`;
+  }
+
+  function hitterSubTakes(rows){
+    const takes = rows.filter(r => r.pitch_call === 'B' || r.pitch_call === 'SL');
+    const goodTakes = takes.filter(r => r.pitch_call === 'B').length;
+    const badTakes = takes.filter(r => r.pitch_call === 'SL').length;
+    return `
+      <div class="section-label" style="margin-top:0;">Taken Pitches — Ball (green, good take) vs Called Strike (red, missed) — n=${takes.length}</div>
+      ${takes.length ? zoneScatterSVG(takes, {
+        colorFn: r => r.pitch_call === 'B' ? '#2a9d8f' : '#8C2232',
+        width: 300, height: 300
+      }) : '<div class="empty-msg">No taken pitches recorded.</div>'}
+      <table class="stat-table" style="margin-top:10px;max-width:320px;">
+        <tr><th>Take Type</th><th>Count</th><th>%</th></tr>
+        <tr><td>Ball (good take)</td><td>${goodTakes}</td><td>${takes.length?(goodTakes/takes.length*100).toFixed(1):'0.0'}%</td></tr>
+        <tr><td>Called Strike (missed)</td><td>${badTakes}</td><td>${takes.length?(badTakes/takes.length*100).toFixed(1):'0.0'}%</td></tr>
+      </table>`;
+  }
+
+  // Labeled explicitly as this app's interpretation of "Sequences" -- a
+  // pitch-by-pitch sequence replay isn't built yet, but swing/contact
+  // discipline by count is a genuinely sequence-related view given what's
+  // available, and a reasonable stand-in until true sequencing is built.
+  function hitterSubApproachByCount(rows){
+    const counts = {};
+    rows.forEach(r => {
+      if (r.balls==null || r.strikes==null) return;
+      const key = `${r.balls}-${r.strikes}`;
+      counts[key] = counts[key] || { total:0, swings:0, whiffs:0 };
+      counts[key].total++;
+      if (SWING_CODES.has(r.pitch_call||'')) counts[key].swings++;
+      if (r.pitch_call === 'SS') counts[key].whiffs++;
+    });
+    const order = ['0-0','1-0','0-1','2-0','1-1','0-2','3-0','2-1','1-2','3-1','2-2','3-2'];
+    const present = order.filter(k => counts[k]);
+    return `
+      <table class="stat-table">
+        <tr><th>Count</th><th>Pitches</th><th>Swing%</th><th>Whiff% (of swings)</th></tr>
+        ${present.map(k => {
+          const c = counts[k];
+          const swingPct = (c.swings/c.total*100).toFixed(1);
+          const whiffPct = c.swings ? (c.whiffs/c.swings*100).toFixed(1) : '0.0';
+          return `<tr><td>${k}</td><td>${c.total}</td><td>${swingPct}%</td><td>${whiffPct}%</td></tr>`;
+        }).join('')}
+      </table>
+      <div class="status">This is an approach-by-count breakdown, not a true pitch-sequence replay (e.g. "what came after a first-pitch fastball") -- that's not built yet. Labeled here as the closest available stand-in for the old app's Sequences tab.</div>`;
   }
 </script>
 </body>
