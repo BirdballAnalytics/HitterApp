@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.32.0/plotly.min.js"></script>
 <meta charset="UTF-8">
 <title>Boston College Baseball</title>
 <style>
@@ -507,6 +508,7 @@
         { id: 'pchase', label: 'Chase', render: pitcherSubChase },
         { id: 'velotime', label: 'Velo Over Time', render: pitcherSubVeloTime },
         { id: 'stroverTime', label: 'Strike% Over Time', render: pitcherSubStrikeTime },
+        { id: 'flight3d', label: '3D Pitch Flight', render: pitcherSub3DFlightShell, postRender: pitcherSub3DFlightRender },
       ];
       let activeSub = 'results';
       function renderShell(){
@@ -520,8 +522,15 @@
         detailDiv.querySelectorAll('.subtab-btn').forEach(btn => {
           btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
         });
-        document.getElementById('subtabContent').innerHTML = subtabs.find(t => t.id === activeSub).render(rows);
+        const activeDef = subtabs.find(t => t.id === activeSub);
+        document.getElementById('subtabContent').innerHTML = activeDef.render(rows);
+        // Plotly needs a real DOM element to render into, which doesn't
+        // exist until the innerHTML assignment above completes -- so
+        // any sub-tab that needs Plotly (or similar) sets postRender
+        // instead of/in addition to embedding a static string.
+        if (activeDef.postRender) activeDef.postRender(rows);
       }
+
       renderShell();
     } catch (e) {
       detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
@@ -789,6 +798,81 @@
     });
     const points = Object.entries(byDate).map(([date,d]) => ({x:date, y:d.strikes/d.count*100})).sort((a,b)=>a.x.localeCompare(b.x));
     return lineChartSVG([{label:'Strike%', color:'#8C2232', points}], {width:580, height:220});
+  }
+
+  // ---- 3D Pitch Flight: release point through to plate crossing, per
+  // pitch, colored by pitch type. Uses Plotly (loaded via CDN) since this
+  // is genuine 3D that our SVG primitives aren't built for. Built only
+  // from confirmed-available fields (release point, extension, plate
+  // location) -- NOT the batted-ball spray/contact-point visualizations
+  // the old app had, which need contact_position_x/y/z and bearing/
+  // distance/direction fields the API doesn't provide. ----
+  const MOUND_TO_PLATE_FT = 60.5;
+  // Approximate real-feet conversion for the normalized plate location,
+  // using the same half-width/half-height assumptions as this app's
+  // other zone-based constants -- there's no way to get a truly exact
+  // real-feet plate crossing point since we only have the normalized
+  // value, so this is explicitly an approximation for visual purposes.
+  function approxPlateX(normSide){ return normSide * 0.95; }
+  function approxPlateZ(normHeight){ return 2.5 + normHeight * 1.0; }
+
+  function pitcherSub3DFlightShell(rows){
+    return `
+      <div class="section-label" style="margin-top:0;">3D Pitch Flight (release point to plate crossing)</div>
+      <div id="flight3dPlot" style="width:100%;height:500px;"></div>
+      <div class="status">Release point is real feet (rel_side/rel_height/extension). Plate crossing is converted from this app's normalized zone coordinates to an approximate real-feet position for visual consistency -- treat plate-side distances as illustrative, not exact. The depth axis is compressed (not to true 1:1 scale) so pitch-to-pitch differences stay visible. Capped at 200 pitches for readability; drag to rotate, scroll to zoom.</div>`;
+  }
+
+  function pitcherSub3DFlightRender(rows){
+    if (typeof Plotly === 'undefined') {
+      document.getElementById('flight3dPlot').innerHTML = '<div class="empty-msg">Plotly failed to load (check network/CDN access).</div>';
+      return;
+    }
+    const usable = rows.filter(r => r.rel_side!=null && r.rel_height!=null && r.extension!=null && r.plate_loc_side!=null && r.plate_loc_height!=null);
+    if (usable.length === 0) {
+      document.getElementById('flight3dPlot').innerHTML = '<div class="empty-msg">No pitches with both release and plate location data.</div>';
+      return;
+    }
+    const step = Math.max(1, Math.ceil(usable.length / 200));
+    const sample = usable.filter((_, i) => i % step === 0);
+
+    const byType = {};
+    sample.forEach(r => {
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || { x: [], y: [], z: [] };
+      const releaseY = -(MOUND_TO_PLATE_FT - r.extension);
+      byType[t].x.push(r.rel_side, approxPlateX(r.plate_loc_side), null);
+      byType[t].y.push(releaseY, 0, null);
+      byType[t].z.push(r.rel_height, approxPlateZ(r.plate_loc_height), null);
+    });
+
+    const traces = Object.entries(byType).map(([type, d]) => ({
+      type: 'scatter3d', mode: 'lines',
+      x: d.x, y: d.y, z: d.z,
+      line: { color: pitchColor(type), width: 3 },
+      opacity: 0.55, name: type,
+    }));
+
+    // Strike zone reference box at the plate (y=0), for visual context
+    traces.push({
+      type: 'scatter3d', mode: 'lines',
+      x: [-0.95, 0.95, 0.95, -0.95, -0.95], y: [0,0,0,0,0], z: [1.5, 1.5, 3.5, 3.5, 1.5],
+      line: { color: '#444', width: 3 }, name: 'Strike Zone', showlegend: false,
+    });
+
+    const layout = {
+      scene: {
+        xaxis: { title: 'Side (ft)' },
+        yaxis: { title: 'Depth from plate (ft, compressed)' },
+        zaxis: { title: 'Height (ft)', range: [0, 8] },
+        aspectmode: 'manual', aspectratio: { x: 1, y: 2, z: 1 },
+        camera: { eye: { x: 1.6, y: -1.8, z: 0.5 } },
+      },
+      margin: { l: 0, r: 0, t: 10, b: 0 },
+      legend: { x: 0, y: 1 },
+      paper_bgcolor: 'rgba(0,0,0,0)',
+    };
+    Plotly.newPlot('flight3dPlot', traces, layout, { responsive: true });
   }
 
   async function renderHitterDetail(batterId, batterName){
