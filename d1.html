@@ -130,6 +130,7 @@
       <div class="tabs-nav">
         <button class="tab-btn active" data-tab="pitching">Pitching</button>
         <button class="tab-btn" data-tab="hitting">Hitting</button>
+        <button class="tab-btn" data-tab="sds">SDS</button>
         <button class="tab-btn" disabled title="Not part of this rebuild yet">Scout</button>
       </div>
       <div id="tabContent"></div>
@@ -286,6 +287,7 @@
     </svg>`;
   }
   let currentTeamId = null, currentTeamName = null;
+  let sdsLeagueMean = null, sdsLeagueSd = null;
   let activeTab = 'pitching';
 
   const urlInput = document.getElementById('url');
@@ -326,6 +328,20 @@
     } catch (e) {
       document.getElementById('currentTeamSub').textContent = e.message;
     }
+
+    // Fetch the fixed league SDS baseline once (not per-view) -- SDS+/
+    // Grade always compare against this, regardless of whatever team/
+    // player is currently selected. If enrich_sds.py hasn't run yet,
+    // this comes back empty and the SDS tab explains that clearly
+    // rather than showing broken math.
+    try {
+      const metaResp = await fetch(`${apiBase()}/rest/v1/sds_meta?select=league_mean_sds,league_sd_sds&id=eq.1`, { headers: headers() });
+      const meta = await metaResp.json();
+      if (meta.length) {
+        sdsLeagueMean = meta[0].league_mean_sds;
+        sdsLeagueSd = meta[0].league_sd_sds;
+      }
+    } catch (e) { /* SDS tab will report this as unavailable; not fatal to the rest of the app */ }
   });
 
   // ---- Live team search ----
@@ -373,6 +389,7 @@
   function renderActiveTab(){
     if (activeTab === 'pitching') renderPitchingTab();
     else if (activeTab === 'hitting') renderHittingTab();
+    else if (activeTab === 'sds') renderSDSTab();
   }
 
   document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
@@ -965,6 +982,120 @@
         }).join('')}
       </table>
       <div class="status">This is an approach-by-count breakdown, not a true pitch-sequence replay (e.g. "what came after a first-pitch fastball") -- that's not built yet. Labeled here as the closest available stand-in for the old app's Sequences tab.</div>`;
+  }
+
+  function sdsPlusAndGrade(meanSds){
+    if (meanSds == null || sdsLeagueMean == null || !sdsLeagueSd) return { plus: null, grade: null };
+    const z = (meanSds - sdsLeagueMean) / sdsLeagueSd;
+    return { plus: Math.round((100 + z*10) * 10) / 10, grade: Math.min(80, Math.max(20, Math.round(50 + z*10))) };
+  }
+
+  async function renderSDSTab(){
+    const content = document.getElementById('tabContent');
+    if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
+    if (sdsLeagueMean == null) {
+      content.innerHTML = `<div class="empty-msg">SDS hasn't been computed for this database yet -- run enrich_sds.py, then reload this page.</div>`;
+      return;
+    }
+    content.innerHTML = `<div class="section-label" style="margin-top:0;">Swing Decision Score — Leaderboard</div><div id="sdsLeaderboard"><div class="status">Loading...</div></div>`;
+
+    try {
+      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,sds&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&sds=not.is.null&limit=8000`;
+      const resp = await fetch(url, { headers: headers() });
+      if (!resp.ok) { document.getElementById('sdsLeaderboard').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
+      const rows = await resp.json();
+      if (rows.length === 0) {
+        document.getElementById('sdsLeaderboard').innerHTML = `<div class="empty-msg">No SDS-scored pitches for ${currentTeamName} yet.</div>`;
+        return;
+      }
+      const byHitter = {};
+      rows.forEach(r => {
+        byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, sum: 0, n: 0 };
+        byHitter[r.batter_id].sum += r.sds; byHitter[r.batter_id].n++;
+      });
+      const leaderboard = Object.entries(byHitter).map(([id, s]) => {
+        const meanSds = s.sum / s.n;
+        const { plus, grade } = sdsPlusAndGrade(meanSds);
+        return { id, name: s.name, pitches: s.n, meanSds, plus, grade };
+      }).sort((a,b) => b.plus - a.plus);
+
+      document.getElementById('sdsLeaderboard').innerHTML = `
+        <table class="stat-table">
+          <tr><th>Hitter</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Grade</th></tr>
+          ${leaderboard.map(h => `<tr class="clickable" data-id="${h.id}" data-name="${h.name}">
+            <td>${h.name}</td><td>${h.pitches}</td><td>${h.meanSds.toFixed(1)}</td><td>${h.plus}</td><td>${h.grade}</td>
+          </tr>`).join('')}
+        </table>`;
+      document.querySelectorAll('#sdsLeaderboard tr[data-id]').forEach(row => {
+        row.addEventListener('click', () => renderSDSHitterDetail(row.dataset.id, row.dataset.name));
+      });
+    } catch (e) {
+      document.getElementById('sdsLeaderboard').innerHTML = `<div class="empty-msg">${e.message}</div>`;
+    }
+  }
+
+  async function renderSDSHitterDetail(batterId, batterName){
+    const content = document.getElementById('tabContent');
+    content.innerHTML = '';
+    const detailDiv = document.createElement('div');
+    detailDiv.className = 'pitcher-detail';
+    detailDiv.innerHTML = `<div class="status">Loading ${batterName}...</div>`;
+    content.appendChild(detailDiv);
+
+    try {
+      const url = `${apiBase()}/rest/v1/pitches?select=tagged_pitch_type,attack_zone,sds&batter_id=eq.${encodeURIComponent(batterId)}&sds=not.is.null&limit=3000`;
+      const resp = await fetch(url, { headers: headers() });
+      const rows = await resp.json();
+      if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No SDS-scored pitches for this hitter.</div>`; return; }
+
+      const overall = rows.reduce((s,r) => s+r.sds, 0) / rows.length;
+      const { plus, grade } = sdsPlusAndGrade(overall);
+
+      const byType = {};
+      rows.forEach(r => {
+        const t = r.tagged_pitch_type || 'Unknown';
+        byType[t] = byType[t] || { sum:0, n:0 };
+        byType[t].sum += r.sds; byType[t].n++;
+      });
+      const typeRows = Object.entries(byType).sort((a,b)=>b[1].n-a[1].n);
+
+      const zoneOrder = ['Heart','Shadow','Chase','Waste'];
+      const byZone = {};
+      rows.forEach(r => {
+        if (!r.attack_zone) return;
+        byZone[r.attack_zone] = byZone[r.attack_zone] || { sum:0, n:0 };
+        byZone[r.attack_zone].sum += r.sds; byZone[r.attack_zone].n++;
+      });
+
+      detailDiv.innerHTML = `
+        <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
+        <div class="section-label" style="margin-top:0;">${batterName} — Total SDS</div>
+        <table class="stat-table" style="max-width:400px;">
+          <tr><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Grade</th></tr>
+          <tr><td>${rows.length}</td><td>${overall.toFixed(1)}</td><td>${plus}</td><td>${grade}</td></tr>
+        </table>
+
+        <div class="section-label">By Pitch Type</div>
+        <table class="stat-table">
+          <tr><th>Pitch Type</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
+          ${typeRows.map(([type,s]) => {
+            const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
+            return `<tr><td>${type}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus}</td></tr>`;
+          }).join('')}
+        </table>
+
+        <div class="section-label">By Location (Heart / Shadow / Chase / Waste)</div>
+        <table class="stat-table">
+          <tr><th>Zone</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
+          ${zoneOrder.filter(z => byZone[z]).map(z => {
+            const s = byZone[z]; const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
+            return `<tr><td>${z}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus}</td></tr>`;
+          }).join('')}
+        </table>
+        <div class="status">SDS+ always compares against the fixed league-wide baseline (computed once by enrich_sds.py across the whole database), not just this team or whatever's currently filtered -- same reasoning as the original SDS design.</div>`;
+    } catch (e) {
+      detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
+    }
   }
 </script>
 </body>
