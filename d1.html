@@ -131,7 +131,7 @@
       <div class="tabs-nav">
         <button class="tab-btn active" data-tab="pitching">Pitching</button>
         <button class="tab-btn" data-tab="hitting">Hitting</button>
-        <button class="tab-btn" data-tab="sds">SDS</button>
+        <button class="tab-btn" data-tab="hittinglab">Hitting Lab</button>
         <button class="tab-btn" disabled title="Not part of this rebuild yet">Scout</button>
       </div>
       <div id="tabContent"></div>
@@ -390,7 +390,7 @@
   function renderActiveTab(){
     if (activeTab === 'pitching') renderPitchingTab();
     else if (activeTab === 'hitting') renderHittingTab();
-    else if (activeTab === 'sds') renderSDSTab();
+    else if (activeTab === 'hittinglab') renderHittingLabTab();
   }
 
   document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
@@ -447,7 +447,7 @@
     content.innerHTML = `<div class="section-label" style="margin-top:0;">Hitters</div><div id="hitterList"><div class="status">Loading...</div></div>`;
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call,sds&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`;
       const resp = await fetch(url, { headers: headers() });
       if (!resp.ok) { document.getElementById('hitterList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
       const rows = await resp.json();
@@ -460,17 +460,22 @@
 
       const byHitter = {};
       rows.forEach(r => {
-        byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, pitchesSeen: 0, inPlay: 0 };
+        byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, pitchesSeen: 0, inPlay: 0, sdsSum: 0, sdsN: 0 };
         byHitter[r.batter_id].pitchesSeen++;
         if (r.pitch_call === 'IP') byHitter[r.batter_id].inPlay++;
+        if (r.sds != null) { byHitter[r.batter_id].sdsSum += r.sds; byHitter[r.batter_id].sdsN++; }
       });
       const sorted = Object.entries(byHitter).sort((a,b) => b[1].pitchesSeen - a[1].pitchesSeen);
 
       document.getElementById('hitterList').innerHTML = `
         <table class="stat-table">
-          <tr><th>Hitter</th><th>Pitches Seen</th><th>Balls In Play</th></tr>
-          ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}"><td>${s.name}</td><td>${s.pitchesSeen}</td><td>${s.inPlay}</td></tr>`).join('')}
-        </table>`;
+          <tr><th>Hitter</th><th>Pitches Seen</th><th>Balls In Play</th><th>Mean SDS</th></tr>
+          ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}">
+            <td>${s.name}</td><td>${s.pitchesSeen}</td><td>${s.inPlay}</td>
+            <td>${s.sdsN ? (s.sdsSum/s.sdsN).toFixed(1) : '-'}</td>
+          </tr>`).join('')}
+        </table>
+        <div class="status">Full SDS breakdown (by pitch type, by location) is available on each hitter's detail page.</div>`;
       document.querySelectorAll('#hitterList tr[data-id]').forEach(row => {
         row.addEventListener('click', () => renderHitterDetail(row.dataset.id, row.dataset.name));
       });
@@ -884,7 +889,7 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitch_call,exit_speed,angle,plate_loc_side,plate_loc_height,attack_zone,balls,strikes&batter_id=eq.${encodeURIComponent(batterId)}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitch_call,exit_speed,angle,plate_loc_side,plate_loc_height,attack_zone,balls,strikes,tagged_pitch_type,sds&batter_id=eq.${encodeURIComponent(batterId)}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
@@ -892,6 +897,7 @@
 
       const subtabs = [
         { id: 'overview', label: 'Overview', render: hitterSubOverview },
+        { id: 'sds', label: 'SDS', render: hitterSubSDS },
         { id: 'exitvelo', label: 'Exit Velo', render: hitterSubExitVelo },
         { id: 'izwhiff', label: 'IZ Whiff', render: hitterSubIZWhiff },
         { id: 'chase', label: 'Chase', render: hitterSubChase },
@@ -948,6 +954,54 @@
         <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
         <tr><td><b>Chase% (of pitches outside the zone)</b></td><td colspan="2">${chasePct.toFixed(1)}%</td></tr>
       </table>`;
+  }
+
+  function hitterSubSDS(rows){
+    const scored = rows.filter(r => r.sds != null);
+    if (scored.length === 0) {
+      return `<div class="empty-msg">No SDS-scored pitches for this hitter yet -- run enrich_sds.py, then reload.</div>`;
+    }
+    const overall = scored.reduce((s,r) => s+r.sds, 0) / scored.length;
+    const { plus, grade } = sdsPlusAndGrade(overall);
+
+    const byType = {};
+    scored.forEach(r => {
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || { sum:0, n:0 };
+      byType[t].sum += r.sds; byType[t].n++;
+    });
+    const typeRows = Object.entries(byType).sort((a,b)=>b[1].n-a[1].n);
+
+    const zoneOrder = ['Heart','Shadow','Chase','Waste'];
+    const byZone = {};
+    scored.forEach(r => {
+      if (!r.attack_zone) return;
+      byZone[r.attack_zone] = byZone[r.attack_zone] || { sum:0, n:0 };
+      byZone[r.attack_zone].sum += r.sds; byZone[r.attack_zone].n++;
+    });
+
+    return `
+      <table class="stat-table" style="max-width:400px;">
+        <tr><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Grade</th></tr>
+        <tr><td>${scored.length}</td><td>${overall.toFixed(1)}</td><td>${plus ?? '-'}</td><td>${grade ?? '-'}</td></tr>
+      </table>
+      <div class="section-label">By Pitch Type</div>
+      <table class="stat-table">
+        <tr><th>Pitch Type</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
+        ${typeRows.map(([type,s]) => {
+          const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
+          return `<tr><td>${type}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus ?? '-'}</td></tr>`;
+        }).join('')}
+      </table>
+      <div class="section-label">By Location (Heart / Shadow / Chase / Waste)</div>
+      <table class="stat-table">
+        <tr><th>Zone</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
+        ${zoneOrder.filter(z => byZone[z]).map(z => {
+          const s = byZone[z]; const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
+          return `<tr><td>${z}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus ?? '-'}</td></tr>`;
+        }).join('')}
+      </table>
+      <div class="status">SDS+ always compares against the fixed league-wide baseline (computed once by enrich_sds.py across the whole database), not just this team or whatever's currently filtered.</div>`;
   }
 
   function hitterSubExitVelo(rows){
@@ -1074,51 +1128,46 @@
     return { plus: Math.round((100 + z*10) * 10) / 10, grade: Math.min(80, Math.max(20, Math.round(50 + z*10))) };
   }
 
-  async function renderSDSTab(){
+
+  // ---- Hitting Lab ----
+  // Trend and Batted Ball are fully achievable with confirmed-available
+  // data. Space, Heat (Contact Point), and Spray depend on contact_position_x/y/z
+  // and direction (ExitDir) -- newly requested via the ingestion pipeline's
+  // `columns` parameter, but NOT YET VERIFIED against a live pull. Each of
+  // those checks for real data at render time and shows a clear "pending"
+  // message rather than a broken or empty-looking chart if it's not there yet.
+  async function renderHittingLabTab(){
     const content = document.getElementById('tabContent');
     if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
-    if (sdsLeagueMean == null) {
-      content.innerHTML = `<div class="empty-msg">SDS hasn't been computed for this database yet -- run enrich_sds.py, then reload this page.</div>`;
-      return;
-    }
-    content.innerHTML = `<div class="section-label" style="margin-top:0;">Swing Decision Score — Leaderboard</div><div id="sdsLeaderboard"><div class="status">Loading...</div></div>`;
+    content.innerHTML = `<div class="section-label" style="margin-top:0;">Hitting Lab</div><div id="labHitterList"><div class="status">Loading...</div></div>`;
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,sds&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&sds=not.is.null&limit=8000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&pitch_call=eq.IP&limit=8000`;
       const resp = await fetch(url, { headers: headers() });
-      if (!resp.ok) { document.getElementById('sdsLeaderboard').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
+      if (!resp.ok) { document.getElementById('labHitterList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
       const rows = await resp.json();
       if (rows.length === 0) {
-        document.getElementById('sdsLeaderboard').innerHTML = `<div class="empty-msg">No SDS-scored pitches for ${currentTeamName} yet.</div>`;
+        document.getElementById('labHitterList').innerHTML = `<div class="empty-msg">No balls in play ingested for ${currentTeamName} yet.</div>`;
         return;
       }
       const byHitter = {};
-      rows.forEach(r => {
-        byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, sum: 0, n: 0 };
-        byHitter[r.batter_id].sum += r.sds; byHitter[r.batter_id].n++;
-      });
-      const leaderboard = Object.entries(byHitter).map(([id, s]) => {
-        const meanSds = s.sum / s.n;
-        const { plus, grade } = sdsPlusAndGrade(meanSds);
-        return { id, name: s.name, pitches: s.n, meanSds, plus, grade };
-      }).sort((a,b) => b.plus - a.plus);
+      rows.forEach(r => { byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, n: 0 }; byHitter[r.batter_id].n++; });
+      const sorted = Object.entries(byHitter).sort((a,b) => b[1].n - a[1].n);
 
-      document.getElementById('sdsLeaderboard').innerHTML = `
+      document.getElementById('labHitterList').innerHTML = `
         <table class="stat-table">
-          <tr><th>Hitter</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Grade</th></tr>
-          ${leaderboard.map(h => `<tr class="clickable" data-id="${h.id}" data-name="${h.name}">
-            <td>${h.name}</td><td>${h.pitches}</td><td>${h.meanSds.toFixed(1)}</td><td>${h.plus}</td><td>${h.grade}</td>
-          </tr>`).join('')}
+          <tr><th>Hitter</th><th>Balls In Play</th></tr>
+          ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}"><td>${s.name}</td><td>${s.n}</td></tr>`).join('')}
         </table>`;
-      document.querySelectorAll('#sdsLeaderboard tr[data-id]').forEach(row => {
-        row.addEventListener('click', () => renderSDSHitterDetail(row.dataset.id, row.dataset.name));
+      document.querySelectorAll('#labHitterList tr[data-id]').forEach(row => {
+        row.addEventListener('click', () => renderHitterLabDetail(row.dataset.id, row.dataset.name));
       });
     } catch (e) {
-      document.getElementById('sdsLeaderboard').innerHTML = `<div class="empty-msg">${e.message}</div>`;
+      document.getElementById('labHitterList').innerHTML = `<div class="empty-msg">${e.message}</div>`;
     }
   }
 
-  async function renderSDSHitterDetail(batterId, batterName){
+  async function renderHitterLabDetail(batterId, batterName){
     const content = document.getElementById('tabContent');
     content.innerHTML = '';
     const detailDiv = document.createElement('div');
@@ -1127,59 +1176,112 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=tagged_pitch_type,attack_zone,sds&batter_id=eq.${encodeURIComponent(batterId)}&sds=not.is.null&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,exit_speed,angle,contact_position_x,contact_position_y,contact_position_z,direction&batter_id=eq.${encodeURIComponent(batterId)}&pitch_call=eq.IP&limit=2000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
-      if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No SDS-scored pitches for this hitter.</div>`; return; }
+      if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No balls in play for this hitter.</div>`; return; }
 
-      const overall = rows.reduce((s,r) => s+r.sds, 0) / rows.length;
-      const { plus, grade } = sdsPlusAndGrade(overall);
-
-      const byType = {};
-      rows.forEach(r => {
-        const t = r.tagged_pitch_type || 'Unknown';
-        byType[t] = byType[t] || { sum:0, n:0 };
-        byType[t].sum += r.sds; byType[t].n++;
-      });
-      const typeRows = Object.entries(byType).sort((a,b)=>b[1].n-a[1].n);
-
-      const zoneOrder = ['Heart','Shadow','Chase','Waste'];
-      const byZone = {};
-      rows.forEach(r => {
-        if (!r.attack_zone) return;
-        byZone[r.attack_zone] = byZone[r.attack_zone] || { sum:0, n:0 };
-        byZone[r.attack_zone].sum += r.sds; byZone[r.attack_zone].n++;
-      });
-
-      detailDiv.innerHTML = `
-        <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
-        <div class="section-label" style="margin-top:0;">${batterName} — Total SDS</div>
-        <table class="stat-table" style="max-width:400px;">
-          <tr><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Grade</th></tr>
-          <tr><td>${rows.length}</td><td>${overall.toFixed(1)}</td><td>${plus}</td><td>${grade}</td></tr>
-        </table>
-
-        <div class="section-label">By Pitch Type</div>
-        <table class="stat-table">
-          <tr><th>Pitch Type</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
-          ${typeRows.map(([type,s]) => {
-            const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
-            return `<tr><td>${type}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus}</td></tr>`;
-          }).join('')}
-        </table>
-
-        <div class="section-label">By Location (Heart / Shadow / Chase / Waste)</div>
-        <table class="stat-table">
-          <tr><th>Zone</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
-          ${zoneOrder.filter(z => byZone[z]).map(z => {
-            const s = byZone[z]; const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
-            return `<tr><td>${z}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus}</td></tr>`;
-          }).join('')}
-        </table>
-        <div class="status">SDS+ always compares against the fixed league-wide baseline (computed once by enrich_sds.py across the whole database), not just this team or whatever's currently filtered -- same reasoning as the original SDS design.</div>`;
+      const subtabs = [
+        { id: 'trend', label: 'Trend', render: labSubTrend },
+        { id: 'battedball', label: 'Batted Ball', render: labSubBattedBall },
+        { id: 'spray', label: 'Spray', render: labSubSpray },
+        { id: 'space', label: 'Space', render: labSub3DSpaceShell, postRender: labSub3DSpaceRender },
+        { id: 'heat', label: 'Heat', render: labSubContactHeat },
+      ];
+      let activeSub = 'trend';
+      function renderShell(){
+        detailDiv.innerHTML = `
+          <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
+          <div class="section-label" style="margin-top:0;">${batterName} — ${rows.length} balls in play</div>
+          <div class="subtabs-nav">
+            ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+          </div>
+          <div id="subtabContent"></div>`;
+        detailDiv.querySelectorAll('.subtab-btn').forEach(btn => {
+          btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
+        });
+        const activeDef = subtabs.find(t => t.id === activeSub);
+        document.getElementById('subtabContent').innerHTML = activeDef.render(rows);
+        if (activeDef.postRender) activeDef.postRender(rows);
+      }
+      renderShell();
     } catch (e) {
       detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
     }
+  }
+
+  function labSubTrend(rows){
+    const byDate = {};
+    rows.forEach(r => {
+      if (r.date == null || r.exit_speed == null) return;
+      byDate[r.date] = byDate[r.date] || { sum: 0, n: 0 };
+      byDate[r.date].sum += r.exit_speed; byDate[r.date].n++;
+    });
+    const points = Object.entries(byDate).map(([date,d]) => ({x:date, y:d.sum/d.n})).sort((a,b)=>a.x.localeCompare(b.x));
+    if (points.length === 0) return `<div class="empty-msg">No dated exit-velo data.</div>`;
+    return `
+      <div class="section-label" style="margin-top:0;">Exit Velo Over Time</div>
+      ${lineChartSVG([{label:'Avg Exit Velo', color:'#8C2232', points}], {width:580, height:220})}`;
+  }
+
+  function labSubBattedBall(rows){
+    const withAngle = rows.filter(r => r.angle != null);
+    if (withAngle.length === 0) return `<div class="empty-msg">No launch angle data.</div>`;
+    const gb = withAngle.filter(r=>r.angle<10).length;
+    const ld = withAngle.filter(r=>r.angle>=10 && r.angle<25).length;
+    const fb = withAngle.filter(r=>r.angle>=25 && r.angle<50).length;
+    const pu = withAngle.filter(r=>r.angle>=50).length;
+    const maxCount = Math.max(gb, ld, fb, pu, 1);
+    const bar = (label, count) => `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <div style="width:90px;font-size:12px;">${label}</div>
+        <div style="background:var(--maroon);height:16px;width:${(count/maxCount*200).toFixed(0)}px;border-radius:3px;"></div>
+        <div style="font-size:12px;color:#666;">${count} (${(count/withAngle.length*100).toFixed(1)}%)</div>
+      </div>`;
+    return `
+      <div class="section-label" style="margin-top:0;">Batted Ball Type (from launch angle)</div>
+      ${bar('Ground Ball', gb)}${bar('Line Drive', ld)}${bar('Fly Ball', fb)}${bar('Popup', pu)}
+      <div class="status">Approximated from launch angle -- the API doesn't provide a tagged hit-type field directly.</div>`;
+  }
+
+  function labSubSpray(rows){
+    const withDir = rows.filter(r => r.direction != null);
+    if (withDir.length === 0) {
+      return `<div class="empty-msg">No exit-direction data yet. This needs the "direction" field (ExitDir), requested from the API starting with the most recent ingestion pipeline update -- if this still shows empty after a fresh pull, that field may not be coming back as expected and is worth checking directly against the pipeline's log output.</div>`;
+    }
+    return `
+      <div class="section-label" style="margin-top:0;">Spray Direction (n=${withDir.length})</div>
+      ${axisScatterSVG(withDir.map(r=>({...r, idx:1})), {
+        xField:'direction', yField:'idx', xMin:-50, xMax:50, yMin:0, yMax:2,
+        xLabel:'Exit Direction (°, negative=pull side)', yLabel:'', width:400, height:140,
+        colorFn: () => '#8C2232'
+      })}`;
+  }
+
+  function labSub3DSpaceShell(rows){
+    const withContact = rows.filter(r => r.contact_position_x != null && r.contact_position_y != null && r.contact_position_z != null);
+    if (withContact.length === 0) {
+      return `<div class="empty-msg">No contact-position data yet. This needs contact_position_x/y/z, requested from the API starting with the most recent ingestion pipeline update -- if this still shows empty after a fresh pull, worth checking the pipeline's log output to confirm those fields actually came back.</div>`;
+    }
+    return `<div class="section-label" style="margin-top:0;">3D Contact Position (n=${withContact.length})</div><div id="space3dPlot" style="width:100%;height:450px;"></div>`;
+  }
+  function labSub3DSpaceRender(rows){
+    const withContact = rows.filter(r => r.contact_position_x != null && r.contact_position_y != null && r.contact_position_z != null);
+    if (withContact.length === 0 || typeof Plotly === 'undefined') return;
+    Plotly.newPlot('space3dPlot', [{
+      type: 'scatter3d', mode: 'markers',
+      x: withContact.map(r=>r.contact_position_x), y: withContact.map(r=>r.contact_position_y), z: withContact.map(r=>r.contact_position_z),
+      marker: { size: 3, color: '#8C2232', opacity: 0.6 },
+    }], { scene: { xaxis:{title:'X (ft)'}, yaxis:{title:'Y (ft)'}, zaxis:{title:'Z (ft)'} }, margin:{l:0,r:0,t:10,b:0} }, { responsive:true });
+  }
+
+  function labSubContactHeat(rows){
+    const withContact = rows.filter(r => r.contact_position_x != null && r.contact_position_z != null);
+    if (withContact.length === 0) {
+      return `<div class="empty-msg">No contact-position data yet -- same dependency as the Space tab above.</div>`;
+    }
+    return `<div class="section-label" style="margin-top:0;">Contact Point Heat Map (n=${withContact.length})</div>
+      ${axisScatterSVG(withContact, { xField:'contact_position_x', yField:'contact_position_z', xMin:-3, xMax:3, yMin:0, yMax:5, xLabel:'Contact X (ft)', yLabel:'Contact Height (ft)', colorFn: () => '#8C2232', width:320, height:320 })}`;
   }
 </script>
 </body>
