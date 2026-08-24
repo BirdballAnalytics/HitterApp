@@ -167,7 +167,10 @@
     FF: '#D22D49', FA: '#D22D49', FT: '#DE6A04', SI: '#FE9D00', FC: '#933F2C',
     CH: '#1DBE3A', FS: '#3BACAC', SP: '#3BACAC', SC: '#60DB33', FO: '#55CCAB',
     ST: '#DDB33A', SL: '#EEE716',
-    CU: '#3025CE', CB: '#3025CE', KC: '#311D8B', KN: '#867A08', SV: '#376748', EP: '#648FFF',
+    // CU fixed from a dark purple-blue to a light sky-blue after
+    // comparing directly against real Baseball Savant screenshots --
+    // the previous value was a confirmed mismatch, not a style choice.
+    CU: '#61BFEB', CB: '#61BFEB', KC: '#311D8B', KN: '#867A08', SV: '#376748', EP: '#648FFF',
   };
   function pitchColor(type){ return PITCH_COLORS[(type||'').toUpperCase()] || '#999'; }
   function pitchFamily(type){
@@ -951,17 +954,53 @@
       line: { color: '#444', width: 3 }, name: 'Strike Zone', showlegend: false,
     });
 
+    // Ground plane and home plate, added after directly comparing this
+    // chart against real Baseball Savant screenshots -- their view shows
+    // an actual field/plate, not just floating trajectory lines. Plotly's
+    // 3D scenes don't support a gradient sky/field background directly,
+    // so the "field" is real geometry (a flat mesh at z=0) rather than a
+    // background image.
+    const groundPlane = {
+      type: 'mesh3d',
+      x: [-4, 4, 4, -4], y: [-58, -58, 4, 4], z: [0, 0, 0, 0],
+      i: [0, 0], j: [1, 2], k: [2, 3],
+      color: '#c9c4b6', opacity: 0.55, showscale: false, hoverinfo: 'skip', name: '',
+    };
+    // Home plate: same pentagon shape used for the 2D heat maps
+    // elsewhere in this app, just in 3D now -- front edge (facing the
+    // pitcher) at y=0 matching where plate-crossing points already sit,
+    // tapering to a point toward the catcher.
+    const plateZ = 0.02; // just above the ground plane, avoids z-fighting
+    const homePlate = {
+      type: 'mesh3d',
+      x: [-0.708, -0.708, 0, 0.708, 0.708],
+      y: [0, 0.35, 0.6, 0.35, 0],
+      z: [plateZ, plateZ, plateZ, plateZ, plateZ],
+      i: [0, 0, 0], j: [1, 2, 3], k: [2, 3, 4],
+      color: 'white', opacity: 1, showscale: false, hoverinfo: 'skip', name: '',
+    };
+    traces.unshift(groundPlane, homePlate);
+
     const layout = {
       scene: {
         xaxis: { title: 'Side (ft)' },
         yaxis: { title: 'Depth from plate (ft, compressed)' },
         zaxis: { title: 'Height (ft)', range: [0, 8] },
         aspectmode: 'manual', aspectratio: { x: 1, y: 2, z: 1 },
-        camera: { eye: { x: 1.6, y: -1.8, z: 0.5 } },
+        // Positioned behind/above home plate looking toward the mound --
+        // a catcher's-eye-ish elevated view, matching the real Savant
+        // screenshots. The previous version had this backwards (negative
+        // y put the camera on the MOUND side looking at the plate).
+        // Exact framing may need one more round of comparison against a
+        // live screenshot of this chart specifically -- 3D camera
+        // placement is inherently iterative and I can't render real
+        // Plotly output myself to fine-tune it further right now.
+        camera: { eye: { x: 0.25, y: 1.8, z: 0.9 } },
+        bgcolor: '#3a3a38',
       },
       margin: { l: 0, r: 0, t: 10, b: 0 },
-      legend: { x: 0, y: 1 },
-      paper_bgcolor: 'rgba(0,0,0,0)',
+      legend: { x: 0, y: 1, font: { color: '#ccc' } },
+      paper_bgcolor: '#3a3a38',
     };
     Plotly.newPlot('flight3dPlot', traces, layout, { responsive: true });
   }
