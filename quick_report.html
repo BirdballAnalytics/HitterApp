@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Boston College Baseball</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.32.0/plotly.min.js"></script>
+<style>
+  :root { --maroon: #8C2232; --gold: #DBCCA6; --cream: #ede1d2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Inter", system-ui, sans-serif; background: var(--cream); color: #222; }
+  .header-bar { background: var(--maroon); color: white; padding: 14px 24px; display: flex; align-items: center; gap: 14px; border-bottom: 3px solid var(--gold); }
+  .logo-chip { width: 42px; height: 42px; border-radius: 8px; background: white; display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--maroon); font-size: 15px; }
+  .header-bar h1 { font-size: 16px; letter-spacing: 0.08em; margin: 0; font-weight: 700; }
+
+  .landing { max-width: 720px; margin: 60px auto; padding: 0 20px; }
+  .landing h2 { text-align: center; font-size: 20px; color: var(--maroon); margin-bottom: 30px; }
+  .choice-row { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+  .choice-card { background: white; border-radius: 10px; padding: 30px; width: 280px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; border: 2px solid transparent; transition: border-color 0.15s; }
+  .choice-card:hover { border-color: var(--maroon); }
+  .choice-card .icon { font-size: 36px; margin-bottom: 10px; }
+  .choice-card h3 { margin: 0 0 8px; color: var(--maroon); font-size: 16px; }
+  .choice-card p { margin: 0; font-size: 13px; color: #666; line-height: 1.4; }
+
+  .upload-zone { border: 2px dashed var(--maroon); border-radius: 10px; padding: 50px 20px; text-align: center; background: white; cursor: pointer; }
+  .upload-zone.dragover { background: var(--cream); }
+  .upload-zone input { display: none; }
+  .back-link { font-size: 12px; color: var(--maroon); cursor: pointer; text-decoration: underline; display: inline-block; margin-bottom: 16px; }
+
+  .main { max-width: 1000px; margin: 0 auto; padding: 24px 32px; }
+  .section-label { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8C2232; border-bottom: 1px solid #e0d5c5; padding-bottom: 4px; margin: 20px 0 8px; }
+  .section-label:first-child { margin-top: 0; }
+  table.stat-table { width: 100%; border-collapse: collapse; background: white; font-size: 13px; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  table.stat-table th { background: var(--maroon); color: white; text-align: left; padding: 8px 12px; font-size: 12px; }
+  table.stat-table td { padding: 7px 12px; border-bottom: 1px solid #f0ece4; }
+  table.stat-table tr:last-child td { border-bottom: none; }
+  .status { font-size: 12px; color: #888; margin: 6px 0 12px; }
+  .empty-msg { color: #999; font-style: italic; padding: 30px; text-align: center; }
+  .subtabs-nav { display: flex; gap: 4px; border-bottom: 1px solid #e0d5c5; margin: 10px 0 14px; flex-wrap: wrap; }
+  .subtab-btn { background: none; border: none; padding: 6px 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #999; cursor: pointer; border-bottom: 2px solid transparent; font-family: inherit; }
+  .subtab-btn.active { color: var(--maroon); border-bottom-color: var(--maroon); }
+  select#pitcherPicker { padding: 8px; font-size: 13px; margin-bottom: 16px; width: 100%; max-width: 400px; }
+</style>
+</head>
+<body>
+  <div class="header-bar">
+    <div class="logo-chip">BC</div>
+    <h1>BOSTON COLLEGE BASEBALL</h1>
+  </div>
+
+  <div id="landingView" class="landing">
+    <h2>What would you like to do?</h2>
+    <div class="choice-row">
+      <div class="choice-card" onclick="showUploadView()">
+        <div class="icon">&#128193;</div>
+        <h3>Quick Report</h3>
+        <p>Upload a single TrackMan file from a bullpen or outing and get an instant pitcher report -- nothing saved, just for you.</p>
+      </div>
+      <div class="choice-card" onclick="window.location.href='d1.html'">
+        <div class="icon">&#9918;</div>
+        <h3>Open Full D1 App</h3>
+        <p>Browse any D1 team, search players, and see the full stat/chart breakdowns for the season.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="uploadView" class="main" style="display:none;">
+    <span class="back-link" onclick="showLandingView()">&larr; Back</span>
+    <div class="section-label" style="margin-top:0;">Upload a TrackMan CSV</div>
+    <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <input type="file" id="fileInput" accept=".csv">
+      <div>Drag a CSV file here, or click to choose one</div>
+      <div class="status" style="margin-top:10px;">Nothing is uploaded to any server or saved anywhere -- this file is parsed entirely in your browser.</div>
+    </div>
+    <div id="uploadStatus"></div>
+  </div>
+
+  <div id="reportView" class="main" style="display:none;">
+    <span class="back-link" onclick="showLandingView()">&larr; Back / Upload a different file</span>
+    <div id="pitcherPickerWrap"></div>
+    <div id="reportContent"></div>
+  </div>
+
+<script>
+  const SWING_CODES = new Set(['SS', 'F', 'IP']);
+
+  // ---- Shared chart infrastructure (pure SVG, no external library) ----
+  // Coordinate system: plate_loc_height/plate_loc_side are confirmed
+  // normalized (0 = zone center, ~1 = zone edge -- NOT raw feet, unlike
+  // the old app's PlateLocHeight/PlateLocSide). Chase/Waste extend out
+  // to ~2. A visible range of +/-2.3 covers that with a little padding.
+  const ZONE_RANGE = 2.3;
+  const PITCH_COLORS = {
+    // Baseball Savant's official pitch-type colors (as posted by Tom
+    // Tango, MLB's senior data architect). A couple of the rarer codes
+    // (CU/KC/KN/SV/EP) weren't in that specific source, so those are
+    // filled in from a second, corroborating source reflecting the same
+    // Savant scheme -- flag it if any single color looks visibly off
+    // once you see it live, since Savant has revised this palette before.
+    FF: '#D22D49', FA: '#D22D49', FT: '#DE6A04', SI: '#FE9D00', FC: '#933F2C',
+    CH: '#1DBE3A', FS: '#3BACAC', SP: '#3BACAC', SC: '#60DB33', FO: '#55CCAB',
+    ST: '#DDB33A', SL: '#EEE716',
+    CU: '#3025CE', CB: '#3025CE', KC: '#311D8B', KN: '#867A08', SV: '#376748', EP: '#648FFF',
+  };
+  function pitchColor(type){ return PITCH_COLORS[(type||'').toUpperCase()] || '#999'; }
+  function pitchFamily(type){
+    const t = (type||'').toUpperCase();
+    if (['FA','FF','SI','FT','CT','FC'].includes(t)) return 'Fastball';
+    if (['SL','CU','CB','KC','SV'].includes(t)) return 'Breaking';
+    if (['CH','SP','FS'].includes(t)) return 'Offspeed';
+    return 'Other';
+  }
+
+  function zoneScatterSVG(rows, opts={}){
+    const w = opts.width || 260, h = opts.height || 280;
+    const sx = v => (v+ZONE_RANGE)/(2*ZONE_RANGE)*w;
+    const sy = v => h - (v+ZONE_RANGE)/(2*ZONE_RANGE)*h; // flip: +height means up
+    const zoneRect = `<rect x="${sx(-1).toFixed(1)}" y="${sy(1).toFixed(1)}" width="${(sx(1)-sx(-1)).toFixed(1)}" height="${(sy(-1)-sy(1)).toFixed(1)}" fill="none" stroke="#444" stroke-width="1.5"/>`;
+    const dots = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null).map(r => {
+      const color = opts.colorFn ? opts.colorFn(r) : '#8C2232';
+      return `<circle cx="${sx(r.plate_loc_side).toFixed(1)}" cy="${sy(r.plate_loc_height).toFixed(1)}" r="4" fill="${color}" fill-opacity="0.72" stroke="white" stroke-width="0.6"/>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#fafafa;border-radius:6px;display:block;">${zoneRect}${dots}</svg>`;
+  }
+
+  function zoneHeatmapSVG(rows, opts={}){
+    const w = opts.width || 220, h = opts.height || 240;
+    const grid = 14;
+    const cellW = w/grid, cellH = h/grid;
+    const sx = v => (v+ZONE_RANGE)/(2*ZONE_RANGE)*w;
+    const sy = v => h - (v+ZONE_RANGE)/(2*ZONE_RANGE)*h;
+    const pts = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null);
+    const bins = new Array(grid*grid).fill(0);
+    pts.forEach(r => {
+      const bx = Math.min(grid-1, Math.max(0, Math.floor((r.plate_loc_side+ZONE_RANGE)/(2*ZONE_RANGE)*grid)));
+      const by = Math.min(grid-1, Math.max(0, Math.floor((h - (r.plate_loc_height+ZONE_RANGE)/(2*ZONE_RANGE)*h) / cellH)));
+      bins[by*grid+bx]++;
+    });
+    const maxBin = Math.max(1, ...bins);
+    const stops = [[0,'#1a1a2e'],[0.35,'#3d2b56'],[0.6,'#8C2232'],[0.8,'#e07a1f'],[1,'#ffd23f']];
+    function lerpHex(a,b,t){
+      const pa=[1,3,5].map(i=>parseInt(a.slice(i,i+2),16));
+      const pb=[1,3,5].map(i=>parseInt(b.slice(i,i+2),16));
+      const p=pa.map((v,i)=>Math.round(v+(pb[i]-v)*t));
+      return `rgb(${p[0]},${p[1]},${p[2]})`;
+    }
+    function heatColor(t){
+      for (let i=0;i<stops.length-1;i++){
+        if (t <= stops[i+1][0]) {
+          const [t0,c0]=stops[i], [t1,c1]=stops[i+1];
+          return lerpHex(c0,c1,(t-t0)/(t1-t0 || 1));
+        }
+      }
+      return stops[stops.length-1][1];
+    }
+    const blurId = `bh${Math.random().toString(36).slice(2,8)}`;
+    let cells = '';
+    for (let by=0; by<grid; by++){
+      for (let bx=0; bx<grid; bx++){
+        const t = bins[by*grid+bx] / maxBin;
+        if (t <= 0) continue;
+        cells += `<rect x="${(bx*cellW).toFixed(1)}" y="${(by*cellH).toFixed(1)}" width="${cellW.toFixed(1)}" height="${cellH.toFixed(1)}" fill="${heatColor(t)}"/>`;
+      }
+    }
+    const zoneRect = `<rect x="${sx(-1).toFixed(1)}" y="${sy(1).toFixed(1)}" width="${(sx(1)-sx(-1)).toFixed(1)}" height="${(sy(-1)-sy(1)).toFixed(1)}" fill="none" stroke="white" stroke-width="1.5" stroke-opacity="0.7"/>`;
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#10141a;border-radius:6px;display:block;">
+      <defs><filter id="${blurId}" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="${(cellW*0.55).toFixed(2)}"/></filter></defs>
+      <g filter="url(#${blurId})">${cells}</g>
+      ${zoneRect}
+    </svg>`;
+  }
+
+  // Generic scatter with explicit axes -- unlike zoneScatterSVG (which is
+  // locked to the normalized plate-location coordinate system), this
+  // takes arbitrary x/y fields and ranges, so it works for release
+  // points (feet), exit velo vs launch angle, or anything else with its
+  // own natural units.
+  function axisScatterSVG(rows, opts){
+    const w = opts.width || 260, h = opts.height || 240;
+    const pad = { l: 38, r: 12, t: 10, b: 26 };
+    const sx = v => pad.l + (v-opts.xMin)/(opts.xMax-opts.xMin)*(w-pad.l-pad.r);
+    const sy = v => h-pad.b - (v-opts.yMin)/(opts.yMax-opts.yMin)*(h-pad.t-pad.b);
+    const dots = rows.filter(r => r[opts.xField]!=null && r[opts.yField]!=null).map(r => {
+      const color = opts.colorFn ? opts.colorFn(r) : '#8C2232';
+      return `<circle cx="${sx(r[opts.xField]).toFixed(1)}" cy="${sy(r[opts.yField]).toFixed(1)}" r="3.5" fill="${color}" fill-opacity="0.65" stroke="white" stroke-width="0.5"/>`;
+    }).join('');
+    // 3 gridlines on each axis, simple tick labels
+    const xTicks = [0,0.5,1].map(t => opts.xMin + t*(opts.xMax-opts.xMin));
+    const yTicks = [0,0.5,1].map(t => opts.yMin + t*(opts.yMax-opts.yMin));
+    const gridX = xTicks.map(v => `<line x1="${sx(v).toFixed(1)}" y1="${pad.t}" x2="${sx(v).toFixed(1)}" y2="${h-pad.b}" stroke="#e5e5e5" stroke-width="1"/>
+      <text x="${sx(v).toFixed(1)}" y="${h-pad.b+14}" font-size="9" text-anchor="middle" fill="#888">${v.toFixed(0)}</text>`).join('');
+    const gridY = yTicks.map(v => `<line x1="${pad.l}" y1="${sy(v).toFixed(1)}" x2="${w-pad.r}" y2="${sy(v).toFixed(1)}" stroke="#e5e5e5" stroke-width="1"/>
+      <text x="${pad.l-6}" y="${(sy(v)+3).toFixed(1)}" font-size="9" text-anchor="end" fill="#888">${v.toFixed(0)}</text>`).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#fafafa;border-radius:6px;display:block;">
+      ${gridX}${gridY}${dots}
+      <text x="${w/2}" y="${h-4}" font-size="9" text-anchor="middle" fill="#666">${opts.xLabel||''}</text>
+      <text x="10" y="${h/2}" font-size="9" text-anchor="middle" fill="#666" transform="rotate(-90 10 ${h/2})">${opts.yLabel||''}</text>
+    </svg>`;
+  }
+
+  // Simple multi-series line chart for time-series tabs (Velo/Strike% Over
+  // Time). series: [{label, color, points: [{x: 'YYYY-MM-DD', y: number}]}]
+  function lineChartSVG(series, opts={}){
+    const w = opts.width || 560, h = opts.height || 220;
+    const pad = { l: 42, r: 14, t: 14, b: 30 };
+    const allDates = [...new Set(series.flatMap(s => s.points.map(p => p.x)))].sort();
+    if (allDates.length === 0) return `<div class="empty-msg">No data to chart.</div>`;
+    const allY = series.flatMap(s => s.points.map(p => p.y));
+    let yMin = Math.min(...allY), yMax = Math.max(...allY);
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    const pad10 = (yMax-yMin)*0.1;
+    yMin -= pad10; yMax += pad10;
+    const sx = i => pad.l + (allDates.length>1 ? i/(allDates.length-1) : 0.5)*(w-pad.l-pad.r);
+    const sy = v => h-pad.b - (v-yMin)/(yMax-yMin)*(h-pad.t-pad.b);
+    const yTicks = [0,0.5,1].map(t => yMin + t*(yMax-yMin));
+    const gridY = yTicks.map(v => `<line x1="${pad.l}" y1="${sy(v).toFixed(1)}" x2="${w-pad.r}" y2="${sy(v).toFixed(1)}" stroke="#e5e5e5" stroke-width="1"/>
+      <text x="${pad.l-6}" y="${(sy(v)+3).toFixed(1)}" font-size="9" text-anchor="end" fill="#888">${v.toFixed(1)}</text>`).join('');
+    // show at most ~6 x-axis date labels to avoid crowding
+    const labelEvery = Math.max(1, Math.ceil(allDates.length/6));
+    const xLabels = allDates.map((d,i) => i % labelEvery === 0
+      ? `<text x="${sx(i).toFixed(1)}" y="${h-pad.b+14}" font-size="9" text-anchor="middle" fill="#888">${d.slice(5)}</text>` : '').join('');
+    const lines = series.map(s => {
+      const present = allDates.map((d,i) => ({i, p: s.points.find(p => p.x === d)})).filter(x => x.p);
+      const polyline = present.map(x => `${sx(x.i).toFixed(1)},${sy(x.p.y).toFixed(1)}`).join(' ');
+      const dots = present.map(x => `<circle cx="${sx(x.i).toFixed(1)}" cy="${sy(x.p.y).toFixed(1)}" r="2.5" fill="${s.color}"/>`).join('');
+      return `<polyline points="${polyline}" fill="none" stroke="${s.color}" stroke-width="2"/>${dots}`;
+    }).join('');
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#fafafa;border-radius:6px;display:block;">
+      ${gridY}${xLabels}${lines}
+    </svg>`;
+  }
+  function pitcherSubResults(rows){
+    const total = rows.length;
+    let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0;
+    rows.forEach(r => {
+      if (r.pitch_call === 'B') balls++;
+      else if (r.pitch_call === 'SL') calledStrikes++;
+      else if (r.pitch_call === 'SS') swingingStrikes++;
+      else if (r.pitch_call === 'F') fouls++;
+      else if (r.pitch_call === 'IP') inPlay++;
+      else if (r.pitch_call === 'HBP') hbp++;
+    });
+    const swings = swingingStrikes + fouls + inPlay;
+    const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
+    const strikePct = (calledStrikes + swingingStrikes + fouls + inPlay) / total * 100;
+    const byZone = { Heart: 0, Shadow: 0, Chase: 0, Waste: 0 };
+    let zoneKnown = 0;
+    rows.forEach(r => { if (r.attack_zone && byZone.hasOwnProperty(r.attack_zone)) { byZone[r.attack_zone]++; zoneKnown++; } });
+    return `
+      <table class="stat-table">
+        <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
+        <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
+        <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
+        <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
+        <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
+        <tr><td><b>Strike%</b></td><td colspan="2">${strikePct.toFixed(1)}%</td></tr>
+        <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
+      </table>
+      <div class="section-label">Location Summary (Heart / Shadow / Chase / Waste)</div>
+      <table class="stat-table">
+        <tr><th>Zone</th><th>Count</th><th>%</th></tr>
+        ${Object.entries(byZone).map(([z,c]) => `<tr><td>${z}</td><td>${c}</td><td>${zoneKnown ? (c/zoneKnown*100).toFixed(1) : '0.0'}%</td></tr>`).join('')}
+      </table>`;
+  }
+
+  function pitcherSubMetrics(rows){
+    const total = rows.length;
+    const byType = {};
+    rows.forEach(r => {
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || {
+        count:0, veloSum:0,veloN:0,veloMax:null, spinSum:0,spinN:0,spinMax:null,
+        ivbSum:0,ivbN:0, hbSum:0,hbN:0, vaaSum:0,vaaN:0, haaSum:0,haaN:0
+      };
+      const s = byType[t];
+      s.count++;
+      if (r.rel_speed!=null){ s.veloSum+=r.rel_speed; s.veloN++; s.veloMax = s.veloMax==null ? r.rel_speed : Math.max(s.veloMax, r.rel_speed); }
+      if (r.spin_rate!=null){ s.spinSum+=r.spin_rate; s.spinN++; s.spinMax = s.spinMax==null ? r.spin_rate : Math.max(s.spinMax, r.spin_rate); }
+      if (r.induced_vert_break!=null){ s.ivbSum+=r.induced_vert_break; s.ivbN++; }
+      if (r.horz_break!=null){ s.hbSum+=r.horz_break; s.hbN++; }
+      if (r.vert_appr_angle!=null){ s.vaaSum+=r.vert_appr_angle; s.vaaN++; }
+      if (r.horz_appr_angle!=null){ s.haaSum+=r.horz_appr_angle; s.haaN++; }
+    });
+    const mixRows = Object.entries(byType).sort((a,b)=>b[1].count-a[1].count);
+    const moveRows = rows.filter(r => r.induced_vert_break!=null && r.horz_break!=null);
+    const types = mixRows.map(([t])=>t);
+    return `
+      <table class="stat-table">
+        <tr><th>Pitch Type</th><th>Count</th><th>%</th><th>Avg Velo</th><th>Max Velo</th><th>Avg Spin</th><th>Max Spin</th><th>IVB</th><th>HB</th><th>VAA</th><th>HAA</th></tr>
+        ${mixRows.map(([type,s]) => `<tr>
+          <td>${type}</td><td>${s.count}</td><td>${(s.count/total*100).toFixed(1)}%</td>
+          <td>${s.veloN ? (s.veloSum/s.veloN).toFixed(1) : '-'}</td>
+          <td>${s.veloMax!=null ? s.veloMax.toFixed(1) : '-'}</td>
+          <td>${s.spinN ? Math.round(s.spinSum/s.spinN) : '-'}</td>
+          <td>${s.spinMax!=null ? Math.round(s.spinMax) : '-'}</td>
+          <td>${s.ivbN ? (s.ivbSum/s.ivbN).toFixed(1) : '-'}</td>
+          <td>${s.hbN ? (s.hbSum/s.hbN).toFixed(1) : '-'}</td>
+          <td>${s.vaaN ? (s.vaaSum/s.vaaN).toFixed(1) : '-'}</td>
+          <td>${s.haaN ? (s.haaSum/s.haaN).toFixed(1) : '-'}</td>
+        </tr>`).join('')}
+      </table>
+      <div class="section-label">Pitch Plot (movement: horizontal vs induced vertical break)</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>${moveRows.length ? axisScatterSVG(moveRows, {
+          xField:'horz_break', yField:'induced_vert_break', xMin:-25, xMax:25, yMin:-25, yMax:25,
+          xLabel:'Horizontal Break (in)', yLabel:'Induced Vertical Break (in)',
+          colorFn: r => pitchColor(r.tagged_pitch_type), width:280, height:280
+        }) : '<div class="empty-msg">No movement data.</div>'}</div>
+        <div style="display:flex;flex-direction:column;gap:6px;padding-top:8px;">
+          ${types.map(t => `<div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <span style="width:10px;height:10px;border-radius:50%;background:${pitchColor(t)};display:inline-block;"></span>${t}
+          </div>`).join('')}
+        </div>
+      </div>
+      <div class="status">VAA/HAA are the pitch's approach angle at the plate (vertical/horizontal). Pitch plot axes are centered at 0,0 (a spinless, gravity-only pitch) -- same convention Baseball Savant's movement charts use.</div>`;
+  }
+
+  function pitcherSubLocations(rows){
+    const byType = {};
+    rows.forEach(r => { const t=r.tagged_pitch_type||'Unknown'; byType[t]=(byType[t]||0)+1; });
+    const types = Object.keys(byType).sort((a,b)=>byType[b]-byType[a]);
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>${zoneScatterSVG(rows, {colorFn: r => pitchColor(r.tagged_pitch_type)})}</div>
+        <div style="display:flex;flex-direction:column;gap:6px;padding-top:8px;">
+          ${types.map(t => `<div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <span style="width:10px;height:10px;border-radius:50%;background:${pitchColor(t)};display:inline-block;"></span>
+            ${t} (${byType[t]})
+          </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  function pitcherSubHeatmaps(rows){
+    const families = ['Fastball','Breaking','Offspeed'];
+    const byFamily = {};
+    families.forEach(f => byFamily[f] = rows.filter(r => pitchFamily(r.tagged_pitch_type) === f));
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        ${families.map(f => `
+          <div style="width:200px;">
+            <div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">${f} (n=${byFamily[f].length})</div>
+            ${byFamily[f].length ? zoneHeatmapSVG(byFamily[f], {width:200,height:210}) : '<div class="empty-msg" style="padding:60px 10px;">No pitches</div>'}
+          </div>`).join('')}
+      </div>
+      <div class="status">Pitch families are grouped from tagged_pitch_type (Fastball: FA/FF/SI/FT/CT/FC, Breaking: SL/CU/CB/KC, Offspeed: CH/SP/FS) -- an approximation, since the API doesn't provide a pre-grouped family field.</div>`;
+  }
+
+  function pitcherSubSplit(rows){
+    function outcomeBlock(sub, label){
+      const total = sub.length;
+      if (total === 0) return `<div class="empty-msg" style="padding:16px;">No pitches vs ${label}</div>`;
+      let calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, balls=0;
+      sub.forEach(r => {
+        if (r.pitch_call==='B') balls++;
+        else if (r.pitch_call==='SL') calledStrikes++;
+        else if (r.pitch_call==='SS') swingingStrikes++;
+        else if (r.pitch_call==='F') fouls++;
+        else if (r.pitch_call==='IP') inPlay++;
+      });
+      const strikePct = (calledStrikes+swingingStrikes+fouls+inPlay)/total*100;
+      const swings = swingingStrikes+fouls+inPlay;
+      const whiffPct = swings ? swingingStrikes/swings*100 : 0;
+      return `
+        <div style="flex:1;min-width:220px;">
+          <div style="font-size:12px;font-weight:700;margin-bottom:4px;">vs ${label} (n=${total})</div>
+          <table class="stat-table">
+            <tr><th>Metric</th><th>Value</th></tr>
+            <tr><td>Strike%</td><td>${strikePct.toFixed(1)}%</td></tr>
+            <tr><td>Whiff% (of swings)</td><td>${whiffPct.toFixed(1)}%</td></tr>
+            <tr><td>Ball%</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
+            <tr><td>In Play%</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
+          </table>
+        </div>`;
+    }
+    const vsL = rows.filter(r => r.batter_side === 'L');
+    const vsR = rows.filter(r => r.batter_side === 'R');
+    const unknown = rows.length - vsL.length - vsR.length;
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        ${outcomeBlock(vsL, 'LHH')}
+        ${outcomeBlock(vsR, 'RHH')}
+      </div>
+      ${unknown ? `<div class="status">${unknown} pitch(es) have no recorded batter_side and aren't included in either split.</div>` : ''}`;
+  }
+
+  function pitcherSubRelease(rows){
+    const byType = {};
+    rows.forEach(r => {
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || { count:0, rhSum:0,rhN:0, rsSum:0,rsN:0, extSum:0,extN:0 };
+      const s = byType[t];
+      s.count++;
+      if (r.rel_height!=null){ s.rhSum+=r.rel_height; s.rhN++; }
+      if (r.rel_side!=null){ s.rsSum+=r.rel_side; s.rsN++; }
+      if (r.extension!=null){ s.extSum+=r.extension; s.extN++; }
+    });
+    const typeRows = Object.entries(byType).sort((a,b)=>b[1].count-a[1].count);
+    const releaseRows = rows.filter(r => r.rel_side!=null && r.rel_height!=null);
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>
+          <div style="font-size:12px;font-weight:700;margin-bottom:4px;">Release Point (view: from behind the mound, looking toward home)</div>
+          ${releaseRows.length ? axisScatterSVG(releaseRows, {
+            xField:'rel_side', yField:'rel_height', xMin:4, xMax:-4, yMin:3, yMax:8,
+            xLabel:'Release Side (ft)', yLabel:'Release Height (ft)',
+            colorFn: r => pitchColor(r.tagged_pitch_type), width:260, height:240
+          }) : '<div class="empty-msg">No release point data.</div>'}
+        </div>
+        <table class="stat-table" style="flex:1;min-width:280px;">
+          <tr><th>Pitch Type</th><th>Count</th><th>Avg Rel Height</th><th>Avg Rel Side</th><th>Avg Extension</th></tr>
+          ${typeRows.map(([type,s]) => `<tr>
+            <td>${type}</td><td>${s.count}</td>
+            <td>${s.rhN ? (s.rhSum/s.rhN).toFixed(2) : '-'}</td>
+            <td>${s.rsN ? (s.rsSum/s.rsN).toFixed(2) : '-'}</td>
+            <td>${s.extN ? (s.extSum/s.extN).toFixed(2) : '-'}</td>
+          </tr>`).join('')}
+        </table>
+      </div>
+      <div class="status">This view is mirrored from the plate-location charts elsewhere in this app (which show the catcher's-eye view) -- release side is flipped here to show what the pitcher themselves would see looking toward home plate.</div>`;
+  }
+
+  function pitcherSubCountStrike(rows){
+    const counts = {};
+    rows.forEach(r => {
+      if (r.balls==null || r.strikes==null) return;
+      const key = `${r.balls}-${r.strikes}`;
+      counts[key] = counts[key] || { count:0, strikes:0 };
+      counts[key].count++;
+      if (SWING_CODES.has(r.pitch_call||'') || r.pitch_call==='SL') counts[key].strikes++;
+    });
+    const order = ['0-0','1-0','0-1','2-0','1-1','0-2','3-0','2-1','1-2','3-1','2-2','3-2'];
+    const present = order.filter(k => counts[k]);
+    return `
+      <table class="stat-table">
+        <tr><th>Count</th><th>Pitches</th><th>Strike%</th></tr>
+        ${present.map(k => `<tr><td>${k}</td><td>${counts[k].count}</td><td>${(counts[k].strikes/counts[k].count*100).toFixed(1)}%</td></tr>`).join('')}
+      </table>
+      <div class="status">Strike% here counts called strikes, swinging strikes, fouls, and balls in play as strikes -- same definition used throughout this app's Strike% figures.</div>`;
+  }
+
+  function pitcherSubIZWhiff(rows){
+    const whiffs = rows.filter(r => r.pitch_call === 'SS');
+    return `
+      <div class="section-label" style="margin-top:0;">Swinging Strikes Induced (n=${whiffs.length})</div>
+      ${whiffs.length ? zoneHeatmapSVG(whiffs, {width:260,height:280}) : '<div class="empty-msg">No swinging strikes recorded.</div>'}`;
+  }
+
+  function pitcherSubChase(rows){
+    const chased = rows.filter(r => (r.attack_zone==='Chase' || r.attack_zone==='Waste') && SWING_CODES.has(r.pitch_call||''));
+    return `
+      <div class="section-label" style="margin-top:0;">Chases Induced (batter swung, pitch outside the zone) — n=${chased.length}</div>
+      ${chased.length ? zoneHeatmapSVG(chased, {width:260,height:280}) : '<div class="empty-msg">No chases induced.</div>'}`;
+  }
+
+  function pitcherSubVeloTime(rows){
+    const byType = {};
+    rows.forEach(r => {
+      if (r.date==null || r.rel_speed==null) return;
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || {};
+      byType[t][r.date] = byType[t][r.date] || { sum:0, n:0 };
+      byType[t][r.date].sum += r.rel_speed;
+      byType[t][r.date].n++;
+    });
+    const types = Object.keys(byType).sort((a,b) => Object.values(byType[b]).reduce((s,d)=>s+d.n,0) - Object.values(byType[a]).reduce((s,d)=>s+d.n,0)).slice(0,4);
+    const series = types.map(t => ({
+      label: t, color: pitchColor(t),
+      points: Object.entries(byType[t]).map(([date,d]) => ({x:date, y:d.sum/d.n})).sort((a,b)=>a.x.localeCompare(b.x))
+    }));
+    return `
+      ${lineChartSVG(series, {width:580, height:220})}
+      <div class="chip-legend" style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap;">
+        ${series.map(s => `<span style="display:flex;align-items:center;gap:4px;font-size:12px;">
+          <span style="width:10px;height:10px;border-radius:50%;background:${s.color};display:inline-block;"></span>${s.label}
+        </span>`).join('')}
+      </div>
+      <div class="status">Top 4 most-thrown pitch types shown, one point per date (average velo that day).</div>`;
+  }
+
+  function pitcherSubStrikeTime(rows){
+    const byDate = {};
+    rows.forEach(r => {
+      if (r.date==null) return;
+      byDate[r.date] = byDate[r.date] || { count:0, strikes:0 };
+      byDate[r.date].count++;
+      if (SWING_CODES.has(r.pitch_call||'') || r.pitch_call==='SL') byDate[r.date].strikes++;
+    });
+    const points = Object.entries(byDate).map(([date,d]) => ({x:date, y:d.strikes/d.count*100})).sort((a,b)=>a.x.localeCompare(b.x));
+    return lineChartSVG([{label:'Strike%', color:'#8C2232', points}], {width:580, height:220});
+  }
+
+  // ---- 3D Pitch Flight: release point through to plate crossing, per
+  // pitch, colored by pitch type. Uses Plotly (loaded via CDN) since this
+  // is genuine 3D that our SVG primitives aren't built for. Built only
+  // from confirmed-available fields (release point, extension, plate
+  // location) -- NOT the batted-ball spray/contact-point visualizations
+  // the old app had, which need contact_position_x/y/z and bearing/
+  // distance/direction fields the API doesn't provide. ----
+  const MOUND_TO_PLATE_FT = 60.5;
+  // Approximate real-feet conversion for the normalized plate location,
+  // using the same half-width/half-height assumptions as this app's
+  // other zone-based constants -- there's no way to get a truly exact
+  // real-feet plate crossing point since we only have the normalized
+  // value, so this is explicitly an approximation for visual purposes.
+  function approxPlateX(normSide){ return normSide * 0.95; }
+  function approxPlateZ(normHeight){ return 2.5 + normHeight * 1.0; }
+
+  function pitcherSub3DFlightShell(rows){
+    return `
+      <div class="section-label" style="margin-top:0;">3D Pitch Flight (release point to plate crossing)</div>
+      <div id="flight3dPlot" style="width:100%;height:500px;"></div>
+      <div class="status">Release point is real feet (rel_side/rel_height/extension). Plate crossing is converted from this app's normalized zone coordinates to an approximate real-feet position for visual consistency -- treat plate-side distances as illustrative, not exact. The depth axis is compressed (not to true 1:1 scale) so pitch-to-pitch differences stay visible. Capped at 200 pitches for readability; drag to rotate, scroll to zoom.</div>`;
+  }
+
+  function pitcherSub3DFlightRender(rows){
+    if (typeof Plotly === 'undefined') {
+      document.getElementById('flight3dPlot').innerHTML = '<div class="empty-msg">Plotly failed to load (check network/CDN access).</div>';
+      return;
+    }
+    const usable = rows.filter(r => r.rel_side!=null && r.rel_height!=null && r.extension!=null && r.plate_loc_side!=null && r.plate_loc_height!=null);
+    if (usable.length === 0) {
+      document.getElementById('flight3dPlot').innerHTML = '<div class="empty-msg">No pitches with both release and plate location data.</div>';
+      return;
+    }
+    const step = Math.max(1, Math.ceil(usable.length / 200));
+    const sample = usable.filter((_, i) => i % step === 0);
+
+    const byType = {};
+    sample.forEach(r => {
+      const t = r.tagged_pitch_type || 'Unknown';
+      byType[t] = byType[t] || { x: [], y: [], z: [] };
+      const releaseY = -(MOUND_TO_PLATE_FT - r.extension);
+      byType[t].x.push(r.rel_side, approxPlateX(r.plate_loc_side), null);
+      byType[t].y.push(releaseY, 0, null);
+      byType[t].z.push(r.rel_height, approxPlateZ(r.plate_loc_height), null);
+    });
+
+    const traces = Object.entries(byType).map(([type, d]) => ({
+      type: 'scatter3d', mode: 'lines',
+      x: d.x, y: d.y, z: d.z,
+      line: { color: pitchColor(type), width: 3 },
+      opacity: 0.55, name: type,
+    }));
+
+    // Strike zone reference box at the plate (y=0), for visual context
+    traces.push({
+      type: 'scatter3d', mode: 'lines',
+      x: [-0.95, 0.95, 0.95, -0.95, -0.95], y: [0,0,0,0,0], z: [1.5, 1.5, 3.5, 3.5, 1.5],
+      line: { color: '#444', width: 3 }, name: 'Strike Zone', showlegend: false,
+    });
+
+    const layout = {
+      scene: {
+        xaxis: { title: 'Side (ft)' },
+        yaxis: { title: 'Depth from plate (ft, compressed)' },
+        zaxis: { title: 'Height (ft)', range: [0, 8] },
+        aspectmode: 'manual', aspectratio: { x: 1, y: 2, z: 1 },
+        camera: { eye: { x: 1.6, y: -1.8, z: 0.5 } },
+      },
+      margin: { l: 0, r: 0, t: 10, b: 0 },
+      legend: { x: 0, y: 1 },
+      paper_bgcolor: 'rgba(0,0,0,0)',
+    };
+    Plotly.newPlot('flight3dPlot', traces, layout, { responsive: true });
+  }
+
+
+  // ---- View navigation ----
+  function showLandingView(){
+    document.getElementById('landingView').style.display = 'block';
+    document.getElementById('uploadView').style.display = 'none';
+    document.getElementById('reportView').style.display = 'none';
+  }
+  function showUploadView(){
+    document.getElementById('landingView').style.display = 'none';
+    document.getElementById('uploadView').style.display = 'block';
+    document.getElementById('reportView').style.display = 'none';
+  }
+  function showReportView(){
+    document.getElementById('landingView').style.display = 'none';
+    document.getElementById('uploadView').style.display = 'none';
+    document.getElementById('reportView').style.display = 'block';
+  }
+
+  // ---- File input wiring ----
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault(); dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+
+  // ---- Same normalization/mapping logic as upload_trackman_csv.py,
+  // ported to JS. Kept in sync deliberately -- if one changes, the
+  // other should too. ----
+  const PITCH_CALL_MAP = {
+    BallCalled: 'B', Ball: 'B', BallinDirt: 'B', BallIntentional: 'B', AutomaticBall: 'B',
+    StrikeCalled: 'SL', CalledStrike: 'SL',
+    StrikeSwinging: 'SS', SwingingStrike: 'SS',
+    FoulBall: 'F', FoulBallNotFieldable: 'F', FoulBallFieldable: 'F', Foul: 'F',
+    InPlay: 'IP', HitByPitch: 'HBP',
+  };
+  const KOR_BB_MAP = { Strikeout: 'K', Walk: 'BB', K: 'K', BB: 'BB' };
+  const STRIKE_LEFT_R = -0.95, STRIKE_RIGHT_R = 0.95, STRIKE_BOTTOM_R = 1.5, STRIKE_TOP_R = 3.5;
+  const ZONE_CENTER_HEIGHT_R = (STRIKE_TOP_R + STRIKE_BOTTOM_R) / 2;
+  const ZONE_HALF_HEIGHT_R = (STRIKE_TOP_R - STRIKE_BOTTOM_R) / 2;
+  const ZONE_HALF_WIDTH_R = (STRIKE_RIGHT_R - STRIKE_LEFT_R) / 2;
+
+  function normalizePlateLoc(rawSide, rawHeight){
+    const normSide = (rawSide == null || isNaN(rawSide)) ? null : rawSide / ZONE_HALF_WIDTH_R;
+    const normHeight = (rawHeight == null || isNaN(rawHeight)) ? null : (rawHeight - ZONE_CENTER_HEIGHT_R) / ZONE_HALF_HEIGHT_R;
+    return [normSide, normHeight];
+  }
+  function computeAttackZone(normHeight, normSide){
+    if (normHeight == null || normSide == null) return null;
+    const d = Math.max(Math.abs(normSide), Math.abs(normHeight));
+    if (d <= 2/3) return 'Heart';
+    if (d <= 4/3) return 'Shadow';
+    if (d <= 2) return 'Chase';
+    return 'Waste';
+  }
+  function numOrNull(v){ const n = parseFloat(v); return isNaN(n) ? null : n; }
+
+  function transformCsvRow(r){
+    const [normSide, normHeight] = normalizePlateLoc(numOrNull(r.PlateLocSide), numOrNull(r.PlateLocHeight));
+    const rawCall = (r.PitchCall || '').trim();
+    const pitchCall = PITCH_CALL_MAP[rawCall] || null;
+    return {
+      pitcher: r.Pitcher, pitcher_throws: r.PitcherThrows,
+      tagged_pitch_type: r.TaggedPitchType,
+      pitch_call: pitchCall,
+      kor_bb: KOR_BB_MAP[(r.KorBB || '').trim()] || null,
+      rel_speed: numOrNull(r.RelSpeed), spin_rate: numOrNull(r.SpinRate),
+      induced_vert_break: numOrNull(r.InducedVertBreak), horz_break: numOrNull(r.HorzBreak),
+      rel_height: numOrNull(r.RelHeight), rel_side: numOrNull(r.RelSide), extension: numOrNull(r.Extension),
+      vert_appr_angle: numOrNull(r.VertApprAngle), horz_appr_angle: numOrNull(r.HorzApprAngle),
+      plate_loc_side: normSide, plate_loc_height: normHeight,
+      attack_zone: computeAttackZone(normHeight, normSide),
+      exit_speed: numOrNull(r.ExitSpeed), angle: numOrNull(r.Angle),
+      balls: numOrNull(r.Balls), strikes: numOrNull(r.Strikes),
+      batter_side: r.BatterSide,
+      date: r.Date ? new Date(r.Date).toISOString().slice(0,10) : null,
+      trackman_game_id: 'quick-report',
+      _rawPitchCall: rawCall,
+    };
+  }
+
+  let parsedRows = [];
+
+  function handleFile(file){
+    const statusDiv = document.getElementById('uploadStatus');
+    statusDiv.innerHTML = `<div class="status">Parsing ${file.name}...</div>`;
+    Papa.parse(file, {
+      header: true, dynamicTyping: false, skipEmptyLines: true,
+      complete: (results) => {
+        if (!results.data.length) {
+          statusDiv.innerHTML = `<div class="empty-msg">No rows found in this file.</div>`;
+          return;
+        }
+        parsedRows = results.data.map(transformCsvRow).filter(r => r.pitcher);
+        if (parsedRows.length === 0) {
+          statusDiv.innerHTML = `<div class="empty-msg">Couldn't find a "Pitcher" column with data -- is this a standard TrackMan export?</div>`;
+          return;
+        }
+        const unmapped = [...new Set(parsedRows.filter(r => r._rawPitchCall && !r.pitch_call).map(r => r._rawPitchCall))];
+        if (unmapped.length) {
+          statusDiv.innerHTML = `<div class="status">Note: unrecognized PitchCall value(s) found: ${unmapped.join(', ')} -- these pitches will show blank outcomes.</div>`;
+        }
+        showPitcherPicker();
+      },
+      error: (err) => { statusDiv.innerHTML = `<div class="empty-msg">Error parsing file: ${err.message}</div>`; },
+    });
+  }
+
+  function showPitcherPicker(){
+    const pitchers = [...new Set(parsedRows.map(r => r.pitcher))];
+    showReportView();
+    if (pitchers.length === 1) {
+      renderQuickReport(pitchers[0]);
+      document.getElementById('pitcherPickerWrap').innerHTML = '';
+      return;
+    }
+    document.getElementById('pitcherPickerWrap').innerHTML = `
+      <label style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--maroon);">This file has multiple pitchers -- choose one:</label>
+      <select id="pitcherPicker">
+        ${pitchers.map(p => `<option value="${p}">${p}</option>`).join('')}
+      </select>`;
+    document.getElementById('pitcherPicker').addEventListener('change', (e) => renderQuickReport(e.target.value));
+    renderQuickReport(pitchers[0]);
+  }
+
+  // ---- Report shell: same subtabs-array + renderShell pattern used in
+  // d1.html, just driven by a locally-held array instead of a fetch. ----
+  function renderQuickReport(pitcherName){
+    const rows = parsedRows.filter(r => r.pitcher === pitcherName);
+    const content = document.getElementById('reportContent');
+    const games = new Set(rows.map(r => r.trackman_game_id)).size;
+
+    const subtabs = [
+      { id: 'results', label: 'Results', render: pitcherSubResults },
+      { id: 'metrics', label: 'Metrics', render: pitcherSubMetrics },
+      { id: 'locations', label: 'Locations', render: pitcherSubLocations },
+      { id: 'heatmaps', label: 'Heat Maps', render: pitcherSubHeatmaps },
+      { id: 'split', label: 'Results By Split', render: pitcherSubSplit },
+      { id: 'release', label: 'Release/Extension', render: pitcherSubRelease },
+      { id: 'countstrike', label: 'Strike% By Count', render: pitcherSubCountStrike },
+      { id: 'izwhiff', label: 'IZ Whiff', render: pitcherSubIZWhiff },
+      { id: 'pchase', label: 'Chase', render: pitcherSubChase },
+      { id: 'velotime', label: 'Velo Over Time', render: pitcherSubVeloTime },
+      { id: 'stroverTime', label: 'Strike% Over Time', render: pitcherSubStrikeTime },
+      { id: 'flight3d', label: '3D Pitch Flight', render: pitcherSub3DFlightShell, postRender: pitcherSub3DFlightRender },
+    ];
+    let activeSub = 'results';
+    function renderShell(){
+      content.innerHTML = `
+        <div class="section-label" style="margin-top:0;">${pitcherName} — ${rows.length} pitches / ${games || 1} session(s)</div>
+        <div class="subtabs-nav">
+          ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+        </div>
+        <div id="subtabContent"></div>`;
+      content.querySelectorAll('.subtab-btn').forEach(btn => {
+        btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
+      });
+      const activeDef = subtabs.find(t => t.id === activeSub);
+      document.getElementById('subtabContent').innerHTML = activeDef.render(rows);
+      if (activeDef.postRender) activeDef.postRender(rows);
+    }
+    renderShell();
+  }
+
+</script>
+</body>
+</html>
