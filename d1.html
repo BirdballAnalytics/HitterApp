@@ -117,6 +117,15 @@
       <div id="playerResults"></div>
 
       <div class="sidebar-divider"></div>
+      <label for="dateFrom">Date range</label>
+      <input id="dateFrom" type="date">
+      <input id="dateTo" type="date" style="margin-top:6px;">
+      <div style="display:flex;gap:6px;margin-top:6px;">
+        <button onclick="applyDateFilter()" style="flex:1;padding:6px;font-size:12px;background:var(--gold);border:none;border-radius:4px;cursor:pointer;color:var(--maroon);font-weight:700;">Apply</button>
+        <button onclick="clearDateFilter()" style="flex:1;padding:6px;font-size:12px;background:rgba(255,255,255,0.15);border:none;border-radius:4px;cursor:pointer;color:white;">Clear</button>
+      </div>
+
+      <div class="sidebar-divider"></div>
       <div class="settings-toggle" onclick="toggleSettings()">Advanced: change data source</div>
       <div class="settings-box" id="settingsBox">
         <div style="font-size:11px;color:var(--gold);opacity:0.85;margin-bottom:6px;">Pre-configured -- only change this if you're pointing at a different database.</div>
@@ -289,6 +298,31 @@
   }
   let currentTeamId = null, currentTeamName = null;
   let sdsLeagueMean = null, sdsLeagueSd = null;
+  let dateFrom = null, dateTo = null;
+
+  // Appended to every pitches query. PostgREST treats repeated filters on
+  // the same column as AND'd together, so gte + lte on `date` works as a
+  // real inclusive range, not an override.
+  function dateFilterQS(){
+    let qs = '';
+    if (dateFrom) qs += `&date=gte.${dateFrom}`;
+    if (dateTo) qs += `&date=lte.${dateTo}`;
+    return qs;
+  }
+  function applyDateFilter(){
+    dateFrom = document.getElementById('dateFrom').value || null;
+    dateTo = document.getElementById('dateTo').value || null;
+    // Resets to the current tab's team-level view rather than trying to
+    // preserve whatever specific player was open -- keeps this simple
+    // and predictable rather than tracking extra state to restore.
+    renderActiveTab();
+  }
+  function clearDateFilter(){
+    dateFrom = null; dateTo = null;
+    document.getElementById('dateFrom').value = '';
+    document.getElementById('dateTo').value = '';
+    renderActiveTab();
+  }
   let activeTab = 'pitching';
 
   const urlInput = document.getElementById('url');
@@ -409,7 +443,7 @@
     content.innerHTML = `<div class="section-label" style="margin-top:0;">Pitching Staff</div><div id="pitcherList"><div class="status">Loading...</div></div>`;
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=pitcher_id,pitcher,pitch_call&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=pitcher_id,pitcher,pitch_call&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
       const resp = await fetch(url, { headers: headers() });
       if (!resp.ok) { document.getElementById('pitcherList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
       const rows = await resp.json();
@@ -447,7 +481,7 @@
     content.innerHTML = `<div class="section-label" style="margin-top:0;">Hitters</div><div id="hitterList"><div class="status">Loading...</div></div>`;
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call,sds&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call,sds&batter_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
       const resp = await fetch(url, { headers: headers() });
       if (!resp.ok) { document.getElementById('hitterList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
       const rows = await resp.json();
@@ -495,7 +529,7 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side,vert_appr_angle,horz_appr_angle&pitcher_id=eq.${encodeURIComponent(pitcherId)}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side,vert_appr_angle,horz_appr_angle&pitcher_id=eq.${encodeURIComponent(pitcherId)}${dateFilterQS()}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
@@ -813,6 +847,58 @@
   // the old app had, which need contact_position_x/y/z and bearing/
   // distance/direction fields the API doesn't provide. ----
   const MOUND_TO_PLATE_FT = 60.5;
+  const GRAVITY_FTS2 = 32.174;
+
+  // Real curved trajectory, not a straight line -- the point of this
+  // whole chart. For constant acceleration (a reasonable approximation
+  // for both gravity and Magnus force over a pitch's ~0.4s flight), the
+  // deviation of the true curved path from the straight chord connecting
+  // release to plate is a SYMMETRIC PARABOLA: zero at both endpoints,
+  // peaking at the midpoint. That's not a stylistic choice -- it falls
+  // directly out of position(t) = p0 + v0*t + 0.5*a*t² compared to the
+  // linear chord between the same two endpoints. bulge(s) below encodes
+  // exactly that shape; the peak magnitude is driven by real data
+  // (flight time from velocity for gravity's contribution, induced
+  // vertical/horizontal break for the Magnus contribution).
+  //
+  // This is an approximation, not a literal reconstruction -- we don't
+  // have raw acceleration vectors the way Statcast's own public data
+  // does (confirmed missing from this API back when the ingestion
+  // pipeline was first built), so flight time is estimated from average
+  // velocity rather than a true drag-inclusive integration. But the
+  // curve shape itself, and the fact that it curves at all instead of
+  // being a straight line, is physically correct.
+  function curvedTrajectoryPoints(pitch, nSamples){
+    const releaseY = -(MOUND_TO_PLATE_FT - pitch.extension);
+    const plateX = approxPlateX(pitch.plate_loc_side);
+    const plateZ = approxPlateZ(pitch.plate_loc_height);
+    const releaseX = pitch.rel_side, releaseZ = pitch.rel_height;
+
+    const distance = MOUND_TO_PLATE_FT - pitch.extension;
+    const veloFtS = (pitch.rel_speed || 90) * 1.467;
+    const flightTime = distance / veloFtS;
+
+    const bulge = s => 4 * s * (1 - s); // 0 at s=0/1, peak of 1 at s=0.5
+
+    const gravityPeak = 0.125 * GRAVITY_FTS2 * flightTime * flightTime; // ft, always pulls down
+    const ivbFt = (pitch.induced_vert_break || 0) / 12;
+    const hbFt = (pitch.horz_break || 0) / 12;
+    // Positive induced vertical break (backspin "rise" relative to a
+    // spinless pitch) partially counteracts gravity's downward bulge.
+    const zBulgePeak = -gravityPeak + ivbFt * 0.5;
+    const xBulgePeak = hbFt * 0.5;
+
+    const xs = [], ys = [], zs = [];
+    for (let i = 0; i <= nSamples; i++){
+      const s = i / nSamples;
+      const b = bulge(s);
+      xs.push(releaseX + (plateX - releaseX) * s + xBulgePeak * b);
+      ys.push(releaseY + (0 - releaseY) * s);
+      zs.push(releaseZ + (plateZ - releaseZ) * s + zBulgePeak * b);
+    }
+    return { xs, ys, zs };
+  }
+
   // Approximate real-feet conversion for the normalized plate location,
   // using the same half-width/half-height assumptions as this app's
   // other zone-based constants -- there's no way to get a truly exact
@@ -825,7 +911,7 @@
     return `
       <div class="section-label" style="margin-top:0;">3D Pitch Flight (release point to plate crossing)</div>
       <div id="flight3dPlot" style="width:100%;height:500px;"></div>
-      <div class="status">Release point is real feet (rel_side/rel_height/extension). Plate crossing is converted from this app's normalized zone coordinates to an approximate real-feet position for visual consistency -- treat plate-side distances as illustrative, not exact. The depth axis is compressed (not to true 1:1 scale) so pitch-to-pitch differences stay visible. Capped at 200 pitches for readability; drag to rotate, scroll to zoom.</div>`;
+      <div class="status">Trajectories are curved using real physics (gravity + the pitch's actual induced break, not a straight line) -- inspired by Baseball Savant's 3D Pitch Tracks visualization, though not a pixel-identical reconstruction: we don't have raw acceleration vectors the way Statcast's own data does, so flight time is estimated from average velocity rather than a full drag-inclusive simulation. Release point is real feet; plate crossing is converted from this app's normalized zone coordinates to an approximate real-feet position. The depth axis is compressed (not true 1:1 scale) so pitch-to-pitch differences stay visible. Capped at 200 pitches for readability; drag to rotate, scroll to zoom.</div>`;
   }
 
   function pitcherSub3DFlightRender(rows){
@@ -845,10 +931,10 @@
     sample.forEach(r => {
       const t = r.tagged_pitch_type || 'Unknown';
       byType[t] = byType[t] || { x: [], y: [], z: [] };
-      const releaseY = -(MOUND_TO_PLATE_FT - r.extension);
-      byType[t].x.push(r.rel_side, approxPlateX(r.plate_loc_side), null);
-      byType[t].y.push(releaseY, 0, null);
-      byType[t].z.push(r.rel_height, approxPlateZ(r.plate_loc_height), null);
+      const { xs, ys, zs } = curvedTrajectoryPoints(r, 14);
+      byType[t].x.push(...xs, null);
+      byType[t].y.push(...ys, null);
+      byType[t].z.push(...zs, null);
     });
 
     const traces = Object.entries(byType).map(([type, d]) => ({
@@ -889,7 +975,7 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitch_call,exit_speed,angle,plate_loc_side,plate_loc_height,attack_zone,balls,strikes,tagged_pitch_type,sds&batter_id=eq.${encodeURIComponent(batterId)}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitch_call,exit_speed,angle,plate_loc_side,plate_loc_height,attack_zone,balls,strikes,tagged_pitch_type,sds&batter_id=eq.${encodeURIComponent(batterId)}${dateFilterQS()}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
@@ -1142,7 +1228,7 @@
     content.innerHTML = `<div class="section-label" style="margin-top:0;">Hitting Lab</div><div id="labHitterList"><div class="status">Loading...</div></div>`;
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&pitch_call=eq.IP&limit=8000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&pitch_call=eq.IP${dateFilterQS()}&limit=8000`;
       const resp = await fetch(url, { headers: headers() });
       if (!resp.ok) { document.getElementById('labHitterList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
       const rows = await resp.json();
@@ -1176,7 +1262,7 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,exit_speed,angle,contact_position_x,contact_position_y,contact_position_z,direction&batter_id=eq.${encodeURIComponent(batterId)}&pitch_call=eq.IP&limit=2000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,exit_speed,angle,contact_position_x,contact_position_y,contact_position_z,direction&batter_id=eq.${encodeURIComponent(batterId)}&pitch_call=eq.IP${dateFilterQS()}&limit=2000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No balls in play for this hitter.</div>`; return; }
