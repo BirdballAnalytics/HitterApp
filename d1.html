@@ -61,14 +61,18 @@
   .settings-box.open { display: block; }
 
   .main { flex: 1; padding: 24px 32px; min-width: 0; }
-  .tabs-nav { display: flex; gap: 4px; border-bottom: 2px solid #ddd; margin-bottom: 20px; }
-  .tab-btn {
-    background: none; border: none; padding: 10px 16px; font-size: 13px; font-weight: 700;
-    letter-spacing: 0.04em; color: #888; cursor: pointer; border-bottom: 3px solid transparent;
-    text-transform: uppercase; font-family: inherit;
+  .tabs-nav {
+    display: flex; gap: 4px; margin-bottom: 20px; background: #f0ece2;
+    border-radius: 8px; padding: 4px; width: fit-content;
   }
-  .tab-btn.active { color: var(--maroon); border-bottom-color: var(--maroon); }
-  .tab-btn:disabled { color: #ccc; cursor: default; }
+  .tab-btn {
+    background: none; border: none; padding: 9px 18px; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.03em; color: #6b6560; cursor: pointer; border-radius: 6px;
+    text-transform: uppercase; font-family: inherit; transition: background 0.12s, color 0.12s;
+  }
+  .tab-btn:hover:not(.active):not(:disabled) { background: rgba(140,34,50,0.08); }
+  .tab-btn.active { color: white; background: var(--maroon); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+  .tab-btn:disabled { color: #c4bdb4; cursor: default; }
 
   .section-label {
     font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
@@ -77,21 +81,37 @@
   .section-label:first-child { margin-top: 0; }
   table.stat-table { width: 100%; border-collapse: collapse; background: white; font-size: 13px;
     border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-  table.stat-table th { background: var(--maroon); color: white; text-align: left; padding: 8px 12px; font-size: 12px; }
+  table.stat-table th { background: var(--maroon); color: white; text-align: left; padding: 8px 12px; font-size: 12px;
+    white-space: nowrap; user-select: none; }
+  table.stat-table th.sortable { cursor: pointer; }
+  table.stat-table th.sortable:hover { background: #a3283e; }
+  table.stat-table th .sort-arrow { font-size: 9px; opacity: 0.6; margin-left: 3px; }
+  table.stat-table th.sorted .sort-arrow { opacity: 1; }
   table.stat-table td { padding: 7px 12px; border-bottom: 1px solid #f0ece4; }
   table.stat-table tr:last-child td { border-bottom: none; }
   table.stat-table tr.clickable { cursor: pointer; }
   table.stat-table tr.clickable:hover { background: var(--cream); }
+  table.stat-table tr.row-total td { font-weight: 700; background: #faf6ef; }
+  table.stat-table td.rate-stat { color: var(--maroon); font-weight: 600; }
+
+  .chart-card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); overflow: hidden; flex: 1; min-width: 220px; }
+  .chart-card-header { background: #faf6ef; border-bottom: 1px solid #e8e0d2; padding: 8px 12px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--maroon); text-align: center; }
+  .chart-card-body { padding: 10px; }
 
   .status { font-size: 12px; color: #888; margin: 6px 0 12px; }
   .empty-msg { color: #999; font-style: italic; padding: 30px; text-align: center; }
   .pitcher-detail { margin-top: 18px; padding: 16px; background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
   .back-link { font-size: 12px; color: var(--maroon); cursor: pointer; text-decoration: underline; margin-bottom: 10px; display: inline-block; }
-  .subtabs-nav { display: flex; gap: 4px; border-bottom: 1px solid #e0d5c5; margin: 10px 0 14px; flex-wrap: wrap; }
-  .subtab-btn { background: none; border: none; padding: 6px 12px; font-size: 11px; font-weight: 700;
-    letter-spacing: 0.04em; text-transform: uppercase; color: #999; cursor: pointer;
-    border-bottom: 2px solid transparent; font-family: inherit; }
-  .subtab-btn.active { color: var(--maroon); border-bottom-color: var(--maroon); }
+  .subtabs-nav {
+    display: flex; gap: 3px; margin: 10px 0 14px; flex-wrap: wrap; background: #f0ece2;
+    border-radius: 7px; padding: 3px; width: fit-content;
+  }
+  .subtab-btn { background: none; border: none; padding: 6px 13px; font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.03em; text-transform: uppercase; color: #6b6560; cursor: pointer;
+    border-radius: 5px; font-family: inherit; transition: background 0.12s, color 0.12s; }
+  .subtab-btn:hover:not(.active) { background: rgba(140,34,50,0.08); }
+  .subtab-btn.active { color: white; background: var(--maroon); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
 </style>
 </head>
 <body>
@@ -310,6 +330,43 @@
   // walks. This collapses to one row per PA before counting anything
   // outcome-based. ----
   function paKey(r){ return `${r.trackman_game_id}|${r.inning}|${r.top_bottom}|${r.pa_of_inning}`; }
+  // Real, generic click-to-sort for any stat-table -- operates directly
+  // on the rendered DOM rows (parses cell text, detects numeric vs text
+  // columns automatically), so it works on any table without needing
+  // access to the underlying JS data array. Skips non-numeric-looking
+  // placeholder text ("-", "N/A", "∞") gracefully rather than crashing.
+  function makeSortableTable(table){
+    if (!table) return;
+    const headerRow = table.querySelector('tr');
+    if (!headerRow) return;
+    const headers = [...headerRow.children];
+    let sortState = { col: null, dir: 1 };
+    headers.forEach((th, colIdx) => {
+      th.classList.add('sortable');
+      th.innerHTML += ' <span class="sort-arrow">⇅</span>';
+      th.addEventListener('click', () => {
+        const dataRows = [...table.querySelectorAll('tr')].slice(1);
+        const dir = (sortState.col === colIdx) ? -sortState.dir : 1;
+        sortState = { col: colIdx, dir };
+        dataRows.sort((a, b) => {
+          const av = a.children[colIdx].textContent.trim();
+          const bv = b.children[colIdx].textContent.trim();
+          const an = parseFloat(av.replace(/[^0-9.\-]/g, ''));
+          const bn = parseFloat(bv.replace(/[^0-9.\-]/g, ''));
+          const bothNumeric = av.match(/[0-9]/) && bv.match(/[0-9]/) && !isNaN(an) && !isNaN(bn);
+          const cmp = bothNumeric ? (an - bn) : av.localeCompare(bv);
+          return cmp * dir;
+        });
+        dataRows.forEach(r => table.appendChild(r));
+        headers.forEach((h, i) => {
+          h.classList.toggle('sorted', i === colIdx);
+          const arrow = h.querySelector('.sort-arrow');
+          if (arrow) arrow.textContent = i === colIdx ? (dir === 1 ? '▲' : '▼') : '⇅';
+        });
+      });
+    });
+  }
+
   function dedupeByPA(rows){
     const seen = new Map();
     rows.forEach(r => { const k = paKey(r); if (!seen.has(k)) seen.set(k, r); });
@@ -640,6 +697,7 @@
           document.querySelectorAll('#teamSubContent tr[data-id]').forEach(row => {
             row.addEventListener('click', () => renderPitcherDetail(row.dataset.id, row.dataset.name));
           });
+          makeSortableTable(document.querySelector('#teamSubContent table'));
         }
       }
       renderShell();
@@ -734,12 +792,12 @@
       { label: 'BB', get: s => s.walks },
       { label: 'HBP', get: s => s.hbp },
       { label: 'K', get: s => s.strikeouts },
-      { label: 'K/9', get: s => f2(s.k9) },
-      { label: 'BB/9', get: s => f2(s.bb9) },
-      { label: 'ERA*', get: s => runsAvail ? f2(s.era) : 'N/A' },
-      { label: 'FIP', get: s => f2(s.fip) },
-      { label: 'WHIP', get: s => f2(s.whip) },
-      { label: 'K:BB', get: s => f2(s.kbb) },
+      { label: 'K/9', get: s => f2(s.k9), rate: true },
+      { label: 'BB/9', get: s => f2(s.bb9), rate: true },
+      { label: 'ERA*', get: s => runsAvail ? f2(s.era) : 'N/A', rate: true },
+      { label: 'FIP', get: s => f2(s.fip), rate: true },
+      { label: 'WHIP', get: s => f2(s.whip), rate: true },
+      { label: 'K:BB', get: s => f2(s.kbb), rate: true },
     ];
     const splitRows = [
       { label: 'Overall', stats: overall },
@@ -749,15 +807,15 @@
 
     return `
       <div style="display:flex;gap:16px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Pitch Frequency</div>${freqHeat}</div>
-        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Strikeouts</div>${kHeat}</div>
-        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Spray Chart (Hits Allowed)</div>${spray}</div>
+        <div class="chart-card"><div class="chart-card-header">Pitch Frequency</div><div class="chart-card-body">${freqHeat}</div></div>
+        <div class="chart-card"><div class="chart-card-header">Strikeouts</div><div class="chart-card-body">${kHeat}</div></div>
+        <div class="chart-card"><div class="chart-card-header">Spray Chart (Hits Allowed)</div><div class="chart-card-body">${spray}</div></div>
       </div>
       <div class="section-label">Team Pitching Stats</div>
       <div style="overflow-x:auto;">
       <table class="stat-table">
         <tr><th>Split</th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>
-        ${splitRows.map(sr => `<tr><td><b>${sr.label}</b></td>${cols.map(c => `<td>${c.get(sr.stats)}</td>`).join('')}</tr>`).join('')}
+        ${splitRows.map(sr => `<tr class="${sr.label==='Overall'?'row-total':''}"><td><b>${sr.label}</b></td>${cols.map(c => `<td class="${c.rate?'rate-stat':''}">${c.get(sr.stats)}</td>`).join('')}</tr>`).join('')}
       </table>
       </div>
       <div class="status">Innings Pitched/WHIP/FIP use outs_on_play to estimate outs recorded on balls in play, plus strikeouts -- a reasonable approximation given available data, not a guaranteed-exact box score number. FIP uses a fixed approximate constant (3.10), not a recalculated season-specific one.${runsAvail ? ' *ERA here uses TOTAL runs allowed, not earned runs specifically -- the API distinguishes earned from unearned runs via a separate field this pipeline does not pull yet, so this is closer to a runs-allowed average than a strict box-score ERA.' : ' Runs/R-G/ERA show "N/A" -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games will not have it retroactively.'}</div>`;
@@ -799,6 +857,7 @@
           document.querySelectorAll('#teamSubContent tr[data-id]').forEach(row => {
             row.addEventListener('click', () => renderHitterDetail(row.dataset.id, row.dataset.name));
           });
+          makeSortableTable(document.querySelector('#teamSubContent table'));
         }
       }
       renderShell();
@@ -860,16 +919,16 @@
       { label: '2B', get: s => s.doubles },
       { label: '3B', get: s => s.triples },
       { label: 'HR', get: s => s.hr },
-      { label: 'AVG', get: s => f3(s.avg) },
-      { label: 'OBP', get: s => f3(s.obp) },
-      { label: 'SLG', get: s => f3(s.slg) },
-      { label: 'OPS', get: s => f3(s.ops) },
+      { label: 'AVG', get: s => f3(s.avg), rate: true },
+      { label: 'OBP', get: s => f3(s.obp), rate: true },
+      { label: 'SLG', get: s => f3(s.slg), rate: true },
+      { label: 'OPS', get: s => f3(s.ops), rate: true },
       { label: 'ISO', get: s => f3(s.iso) },
-      { label: 'wOBA', get: s => f3(s.woba) },
+      { label: 'wOBA', get: s => f3(s.woba), rate: true },
       { label: 'BABIP', get: s => f3(s.babip) },
-      { label: 'K%', get: s => pct(s.kPct) },
-      { label: 'BB%', get: s => pct(s.bbPct) },
-      { label: 'K:BB', get: s => f2(s.kbb) },
+      { label: 'K%', get: s => pct(s.kPct), rate: true },
+      { label: 'BB%', get: s => pct(s.bbPct), rate: true },
+      { label: 'K:BB', get: s => f2(s.kbb), rate: true },
       { label: 'R/G', get: s => runsAvail ? f2(s.runsPerGame) : 'N/A' },
     ];
     const splitRows = [
@@ -880,15 +939,15 @@
 
     return `
       <div style="display:flex;gap:16px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Slugging</div>${slgHeat}</div>
-        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">95+ Exit Velo</div>${evHeat}</div>
-        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Spray Chart (Hits)</div>${spray}</div>
+        <div class="chart-card"><div class="chart-card-header">Slugging</div><div class="chart-card-body">${slgHeat}</div></div>
+        <div class="chart-card"><div class="chart-card-header">95+ Exit Velo</div><div class="chart-card-body">${evHeat}</div></div>
+        <div class="chart-card"><div class="chart-card-header">Spray Chart (Hits)</div><div class="chart-card-body">${spray}</div></div>
       </div>
       <div class="section-label">Team Hitting Stats</div>
       <div style="overflow-x:auto;">
       <table class="stat-table">
         <tr><th>Split</th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>
-        ${splitRows.map(sr => `<tr><td><b>${sr.label}</b></td>${cols.map(c => `<td>${c.get(sr.stats)}</td>`).join('')}</tr>`).join('')}
+        ${splitRows.map(sr => `<tr class="${sr.label==='Overall'?'row-total':''}"><td><b>${sr.label}</b></td>${cols.map(c => `<td class="${c.rate?'rate-stat':''}">${c.get(sr.stats)}</td>`).join('')}</tr>`).join('')}
       </table>
       </div>
       <div class="status">AB/OBP/BABIP use simplified denominators (sacrifice flies aren't broken out separately in this data). wOBA uses a standard-ish fixed weight set, not a recalculated season-specific one.${runsAvail ? '' : ' R/G shows "N/A" -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games will not have it retroactively.'}</div>`;
