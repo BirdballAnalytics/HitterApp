@@ -549,8 +549,8 @@
     const pitches = rows.length;
     const paRows = dedupeByPA(rows);
 
-    const hits = paRows.filter(r => ['Single','Double','Triple','HomeRun','HR'].includes(r.play_result)).length;
-    const hrCount = paRows.filter(r => ['HomeRun','HR'].includes(r.play_result)).length;
+    const hits = paRows.filter(r => ['S','D','T','HR','IPHR'].includes(r.play_result)).length;
+    const hrCount = paRows.filter(r => ['HR','IPHR'].includes(r.play_result)).length;
     const walks = paRows.filter(r => r.kor_bb === 'BB').length;
     const strikeouts = paRows.filter(r => r.kor_bb === 'K').length;
     const hbp = rows.filter(r => r.pitch_call === 'HBP').length;
@@ -593,13 +593,13 @@
 
     const walks = paRows.filter(r => r.kor_bb === 'BB').length;
     const hbp = rows.filter(r => r.pitch_call === 'HBP').length;
-    const sac = paRows.filter(r => (r.play_result||'').toLowerCase().includes('sac')).length;
+    const sac = paRows.filter(r => ['SH','SF'].includes(r.play_result)).length;
     const ab = Math.max(0, pa - walks - hbp - sac);
 
-    const singles = paRows.filter(r => r.play_result === 'Single').length;
-    const doubles = paRows.filter(r => r.play_result === 'Double').length;
-    const triples = paRows.filter(r => r.play_result === 'Triple').length;
-    const hr = paRows.filter(r => ['HomeRun','HR'].includes(r.play_result)).length;
+    const singles = paRows.filter(r => r.play_result === 'S').length;
+    const doubles = paRows.filter(r => r.play_result === 'D').length;
+    const triples = paRows.filter(r => r.play_result === 'T').length;
+    const hr = paRows.filter(r => ['HR','IPHR'].includes(r.play_result)).length;
     const hits = singles + doubles + triples + hr;
     const strikeouts = paRows.filter(r => r.kor_bb === 'K').length;
 
@@ -932,10 +932,10 @@
   // have been checked against real data repeatedly throughout this
   // project) -- checking a couple of plausible variants defensively.
   function battedBallCategory(playResult){
-    if (playResult === 'Single') return '1B';
-    if (playResult === 'Double') return '2B';
-    if (playResult === 'Triple') return '3B';
-    if (playResult === 'HomeRun' || playResult === 'HR') return 'HR';
+    if (playResult === 'S') return '1B';
+    if (playResult === 'D') return '2B';
+    if (playResult === 'T') return '3B';
+    if (playResult === 'HR' || playResult === 'IPHR') return 'HR';
     if (playResult === 'ROE' || playResult === 'ReachedOnError' || playResult === 'Error') return 'ROE';
     return 'OUT';
   }
@@ -1158,10 +1158,10 @@
     const bipRows = rows.filter(r => r.pitch_call === 'IP');
     const bip = bipRows.length;
     const paBip = dedupeByPA(bipRows);
-    const s1 = paBip.filter(r => r.play_result === 'Single').length;
-    const d2 = paBip.filter(r => r.play_result === 'Double').length;
-    const t3 = paBip.filter(r => r.play_result === 'Triple').length;
-    const hr = paBip.filter(r => ['HomeRun','HR'].includes(r.play_result)).length;
+    const s1 = paBip.filter(r => r.play_result === 'S').length;
+    const d2 = paBip.filter(r => r.play_result === 'D').length;
+    const t3 = paBip.filter(r => r.play_result === 'T').length;
+    const hr = paBip.filter(r => ['HR','IPHR'].includes(r.play_result)).length;
     const wobaConDen = paBip.length;
     const wobaCon = wobaConDen > 0 ? (0.89*s1 + 1.27*d2 + 1.62*t3 + 2.10*hr) / wobaConDen : null;
     const xbaRows = rows.filter(r => r.x_avg != null);
@@ -1569,10 +1569,10 @@
   function hittingTeamSubOverview(rows){
     const slgHeat = weightedHeatmapSVG(rows, r => {
       if (r.pitch_call !== 'IP') return null;
-      if (r.play_result === 'Single') return 1;
-      if (r.play_result === 'Double') return 2;
-      if (r.play_result === 'Triple') return 3;
-      if (r.play_result === 'HomeRun' || r.play_result === 'HR') return 4;
+      if (r.play_result === 'S') return 1;
+      if (r.play_result === 'D') return 2;
+      if (r.play_result === 'T') return 3;
+      if (r.play_result === 'HR' || r.play_result === 'IPHR') return 4;
       return 0;
     }, {width:220,height:230});
 
