@@ -727,6 +727,25 @@
   // Confirmed as of the last check: 0 of 221,663+ in-play pitches have
   // this field populated, even after requesting it explicitly from the
   // API -- see the ingestion pipeline notes for the underlying cause.
+  // Categorizes an in-play pitch by its actual outcome for spray-chart
+  // coloring. "OUT" is a catch-all bucket (regular outs, double/triple
+  // plays, fielder's choice, sac flies/bunts) -- matching the reference
+  // dashboard's own simplified bucketing, which groups all these under
+  // one "OUT" legend entry rather than breaking each out sub-type out
+  // separately. ROE's exact string value in this data hasn't been
+  // independently confirmed the way Single/Double/HomeRun have (those
+  // have been checked against real data repeatedly throughout this
+  // project) -- checking a couple of plausible variants defensively.
+  function battedBallCategory(playResult){
+    if (playResult === 'Single') return '1B';
+    if (playResult === 'Double') return '2B';
+    if (playResult === 'Triple') return '3B';
+    if (playResult === 'HomeRun' || playResult === 'HR') return 'HR';
+    if (playResult === 'ROE' || playResult === 'ReachedOnError' || playResult === 'Error') return 'ROE';
+    return 'OUT';
+  }
+  const BIP_COLORS = { OUT: '#8a8a8a', '1B': '#3a9d4f', '2B': '#2f7fd6', '3B': '#9b4fc9', HR: '#e6552e', ROE: '#e8c33d' };
+
   function sprayChartOrPlaceholder(hitRows, opts={}){
     // Checks both angle sources (bearing is a newer candidate found via
     // the glossary, direction was the original one -- both were
@@ -744,25 +763,39 @@
     // player who barely hit anything -- most usable at team level,
     // where sparse-per-player coverage still adds up to enough dots to
     // be worth looking at.
+    //
+    // hitRows here is meant to be EVERY ball in play, not just hits --
+    // outs are plotted too, matching a real spray chart, not a "hits
+    // only" chart.
     const withAngle = hitRows.filter(r => r.bearing != null || r.direction != null);
     if (withAngle.length === 0) {
-      return `<div class="empty-msg" style="padding:30px 10px;font-size:12px;">Spray chart not available for these hits -- location data is sparse (~6% of in-play pitches have it) and happens to be missing for all of these specifically.</div>`;
+      return `<div class="empty-msg" style="padding:30px 10px;font-size:12px;">Spray chart not available for these balls in play -- location data is sparse (~6% of in-play pitches have it) and happens to be missing for all of these specifically.</div>`;
     }
     const w = opts.width || 240, h = opts.height || 240;
     const cx = w/2, cy = h*0.85;
     const hasRealDistance = withAngle.some(r => r.distance != null);
     const maxDist = hasRealDistance ? Math.max(...withAngle.filter(r=>r.distance!=null).map(r=>r.distance)) : null;
     const nominalR = h*0.75;
+    const categoryCounts = {};
     const pts = withAngle.map(r => {
       const angle = r.bearing != null ? r.bearing : r.direction;
       const rad = (angle * Math.PI) / 180;
       const R = (hasRealDistance && r.distance != null) ? (r.distance / maxDist) * nominalR : nominalR * 0.7;
-      return { x: cx + R*Math.sin(rad), y: cy - R*Math.cos(rad) };
+      const cat = battedBallCategory(r.play_result);
+      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+      return { x: cx + R*Math.sin(rad), y: cy - R*Math.cos(rad), color: BIP_COLORS[cat] };
     });
-    const dots = pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="#8C2232" fill-opacity="0.7" stroke="white" stroke-width="0.5"/>`).join('');
+    const dots = pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="${p.color}" fill-opacity="0.8" stroke="white" stroke-width="0.5"/>`).join('');
     const coveragePct = ((withAngle.length / hitRows.length) * 100).toFixed(0);
+    const legendOrder = ['1B','2B','3B','HR','ROE','OUT'];
+    const legend = legendOrder.filter(c => categoryCounts[c]).map(c =>
+      `<span style="display:inline-flex;align-items:center;gap:3px;margin-right:8px;font-size:10px;color:#666;">
+        <span style="width:8px;height:8px;border-radius:50%;background:${BIP_COLORS[c]};display:inline-block;"></span>${c}: ${categoryCounts[c]}
+      </span>`
+    ).join('');
     return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#e8f0e0;border-radius:6px;display:block;">${dots}</svg>
-      <div style="font-size:10px;color:#888;text-align:center;">Showing ${withAngle.length} of ${hitRows.length} hits (${coveragePct}% have location data) -- the rest are real hits just missing this specific field.</div>
+      <div style="margin-top:4px;">${legend}</div>
+      <div style="font-size:10px;color:#888;text-align:center;">Showing ${withAngle.length} of ${hitRows.length} balls in play (${coveragePct}% have location data) -- the rest are real batted balls just missing this specific field.</div>
       ${!hasRealDistance ? '<div style="font-size:10px;color:#888;text-align:center;">Angle only -- no real distance data yet, so radius is not to scale.</div>' : ''}`;
   }
 
@@ -770,8 +803,8 @@
     const freqHeat = zoneHeatmapSVG(rows, {width:220,height:230});
     const kRows = rows.filter(r => r.kor_bb === 'K' && (r.pitch_call === 'SS' || r.pitch_call === 'SL'));
     const kHeat = kRows.length ? zoneHeatmapSVG(kRows, {width:220,height:230}) : '<div class="empty-msg" style="padding:40px 10px;font-size:12px;">No strikeout pitches identified yet.</div>';
-    const hitsAllowed = rows.filter(r => r.pitch_call === 'IP' && ['Single','Double','Triple','HomeRun','HR'].includes(r.play_result));
-    const spray = sprayChartOrPlaceholder(hitsAllowed, {width:220,height:230});
+    const battedBallsAllowed = rows.filter(r => r.pitch_call === 'IP');
+    const spray = sprayChartOrPlaceholder(battedBallsAllowed, {width:220,height:230});
 
     const overall = computeTraditionalPitchingStats(rows);
     const vsR = computeTraditionalPitchingStats(rows.filter(r => r.batter_side === 'R'));
@@ -809,7 +842,7 @@
       <div style="display:flex;gap:16px;flex-wrap:wrap;">
         <div class="chart-card"><div class="chart-card-header">Pitch Frequency</div><div class="chart-card-body">${freqHeat}</div></div>
         <div class="chart-card"><div class="chart-card-header">Strikeouts</div><div class="chart-card-body">${kHeat}</div></div>
-        <div class="chart-card"><div class="chart-card-header">Spray Chart (Hits Allowed)</div><div class="chart-card-body">${spray}</div></div>
+        <div class="chart-card"><div class="chart-card-header">Spray Chart (Balls In Play)</div><div class="chart-card-body">${spray}</div></div>
       </div>
       <div class="section-label">Team Pitching Stats</div>
       <div style="overflow-x:auto;">
@@ -900,8 +933,8 @@
     const evRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null && r.exit_speed >= 95);
     const evHeat = evRows.length ? zoneHeatmapSVG(evRows, {width:220,height:230}) : '<div class="empty-msg" style="padding:40px 10px;font-size:12px;">No hard-hit (95+) balls recorded yet.</div>';
 
-    const hitsBy = rows.filter(r => r.pitch_call === 'IP' && ['Single','Double','Triple','HomeRun','HR'].includes(r.play_result));
-    const spray = sprayChartOrPlaceholder(hitsBy, {width:220,height:230});
+    const battedBallsByHitter = rows.filter(r => r.pitch_call === 'IP');
+    const spray = sprayChartOrPlaceholder(battedBallsByHitter, {width:220,height:230});
 
     const overall = computeHittingStats(rows);
     const vsRHP = computeHittingStats(rows.filter(r => r.pitcher_throws === 'R'));
@@ -941,7 +974,7 @@
       <div style="display:flex;gap:16px;flex-wrap:wrap;">
         <div class="chart-card"><div class="chart-card-header">Slugging</div><div class="chart-card-body">${slgHeat}</div></div>
         <div class="chart-card"><div class="chart-card-header">95+ Exit Velo</div><div class="chart-card-body">${evHeat}</div></div>
-        <div class="chart-card"><div class="chart-card-header">Spray Chart (Hits)</div><div class="chart-card-body">${spray}</div></div>
+        <div class="chart-card"><div class="chart-card-header">Spray Chart (Balls In Play)</div><div class="chart-card-body">${spray}</div></div>
       </div>
       <div class="section-label">Team Hitting Stats</div>
       <div style="overflow-x:auto;">
