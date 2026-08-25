@@ -301,6 +301,23 @@
     return PITCH_TYPE_SCATTER_COLORS[type.toUpperCase()] || '#999';
   }
 
+  // Shared home plate icon, drawn "pitcher view" -- wide 17" edge at the
+  // top (nearest the strike zone box above it, matching where the front
+  // of the plate actually sits, same convention as the existing 3D Pitch
+  // Flight plate), tapering to the back point at the bottom (toward the
+  // catcher). Rendered as its own small SVG stacked directly below the
+  // main chart, rather than injected into the chart's own SVG string, so
+  // it can't accidentally corrupt the chart markup it's placed under.
+  function homePlateSVG(width){
+    const w = width || 220, h = 26;
+    const midX = w/2, halfWide = w*0.22;
+    const topY = 2, sideY = 15, pointY = h-2;
+    const pts = `${midX-halfWide},${topY} ${midX+halfWide},${topY} ${midX+halfWide},${sideY} ${midX},${pointY} ${midX-halfWide},${sideY}`;
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="display:block;">
+      <polygon points="${pts}" fill="#e8ddc8" stroke="#999" stroke-width="1"/>
+    </svg>`;
+  }
+
   // White-background, blue-to-red heat map -- distinct from
   // zoneHeatmapSVG (dark background, used for the Pitching tab's density
   // maps). Built specifically per the request to match TruMedia's own
@@ -1123,7 +1140,6 @@
         { id: 'swingdec2', label: 'Swing Decisions', render: hittingSubSwingDecisions },
         { id: 'takes2', label: 'Takes', render: hittingSubTakes },
         { id: 'sds2', label: 'SDS', render: hittingSubSDS },
-        { id: 'sequences', label: 'Sequences', render: hittingSubSequences },
       ];
       function renderInnerShell(){
         content.innerHTML = `
@@ -1301,7 +1317,7 @@
       xLabel: 'Horizontal Location', yLabel: 'Vertical Location',
       colorFn: r => EV_BUCKET_COLORS[evBucket(r.exit_speed)] || '#999', width: 260, height: 260,
     }) : '<div class="empty-msg" style="padding:30px;">No balls in play</div>';
-    return `<div class="chart-card"><div class="chart-card-header">${title}</div><div class="chart-card-body">${chart}
+    return `<div class="chart-card"><div class="chart-card-header">${title}</div><div class="chart-card-body">${chart}${homePlateSVG(260)}
       <div style="margin-top:4px;font-size:10px;color:#666;">
         <span style="color:${EV_BUCKET_COLORS['0-74']};">&#9679;</span> 0-74
         <span style="color:${EV_BUCKET_COLORS['75-95']};margin-left:8px;">&#9679;</span> 75-95
@@ -1330,7 +1346,7 @@
   // ---- IZ Whiff / Chase: white heat maps crossed by hand x pitch family (All/FB/OS/BB, 3-way split) ----
   function heatPanel(rows, title){
     const n = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null).length;
-    return `<div class="chart-card"><div class="chart-card-header">${title} (n=${n})</div><div class="chart-card-body">${whiteHeatmapSVG(rows, {width:220,height:230})}</div></div>`;
+    return `<div class="chart-card"><div class="chart-card-header">${title} (n=${n})</div><div class="chart-card-body">${whiteHeatmapSVG(rows, {width:220,height:230})}${homePlateSVG(220)}</div></div>`;
   }
   function izWhiffOrChasePanels(rows, filterFn, labelPrefix){
     const base = rows.filter(filterFn);
@@ -1374,7 +1390,7 @@
       colorFn: r => pitchTypeScatterColor(r.tagged_pitch_type), width: 260, height: 260,
     }) : '<div class="empty-msg" style="padding:30px;">No pitches</div>';
     const legend = types.map(t => `<span style="display:inline-flex;align-items:center;gap:2px;margin-right:6px;font-size:9px;color:#666;"><span style="width:7px;height:7px;border-radius:50%;background:${pitchTypeScatterColor(t)};display:inline-block;"></span>${t}</span>`).join('');
-    return `<div class="chart-card"><div class="chart-card-header">${title}</div><div class="chart-card-body">${chart}<div style="margin-top:4px;">${legend}</div></div></div>`;
+    return `<div class="chart-card"><div class="chart-card-header">${title}</div><div class="chart-card-body">${chart}${homePlateSVG(260)}<div style="margin-top:4px;">${legend}</div></div></div>`;
   }
   function swingOrTakePanels(rows, filterFn, labelPrefix){
     const base = rows.filter(filterFn);
@@ -1473,35 +1489,6 @@
           }).join('')}
         </table></div>
       </div>`;
-  }
-
-  // ---- Sequences: NO REFERENCE SCREENSHOT was provided for this tab, so
-  // this is explicitly a best-effort stand-in (same "approach by count"
-  // concept used earlier in this project for individual hitters), not a
-  // replica of anything actually seen. ----
-  function hittingSubSequences(rows){
-    const counts = {};
-    rows.forEach(r => {
-      if (r.balls == null || r.strikes == null) return;
-      const key = `${r.balls}-${r.strikes}`;
-      counts[key] = counts[key] || { total: 0, swings: 0, whiffs: 0 };
-      counts[key].total++;
-      if (SWING_CODES.has(r.pitch_call||'')) counts[key].swings++;
-      if (r.pitch_call === 'SS') counts[key].whiffs++;
-    });
-    const order = ['0-0','1-0','0-1','2-0','1-1','0-2','3-0','2-1','1-2','3-1','2-2','3-2'];
-    const present = order.filter(k => counts[k]);
-    return `
-      <div class="empty-msg" style="padding:10px 10px 20px;text-align:left;font-style:normal;">No reference screenshot was available for this tab, so this is a best-effort stand-in (approach-by-count), not a replica of a specific design.</div>
-      <div style="overflow-x:auto;"><table class="stat-table">
-        <tr><th>Count</th><th>Pitches</th><th>Swing%</th><th>Whiff% (of swings)</th></tr>
-        ${present.map(k => {
-          const c = counts[k];
-          const swingPct = (c.swings/c.total*100).toFixed(1);
-          const whiffPct = c.swings ? (c.whiffs/c.swings*100).toFixed(1) : '0.0';
-          return `<tr><td>${k}</td><td>${c.total}</td><td>${swingPct}%</td><td>${whiffPct}%</td></tr>`;
-        }).join('')}
-      </table></div>`;
   }
 
   function hittingSubTraditionalStats(rows){
