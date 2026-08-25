@@ -719,6 +719,33 @@
     const vsR = computeTraditionalPitchingStats(rows.filter(r => r.batter_side === 'R'));
     const vsL = computeTraditionalPitchingStats(rows.filter(r => r.batter_side === 'L'));
     const f2 = v => v==null ? '-' : (v===Infinity ? '∞' : v.toFixed(2));
+    const runsAvail = overall.runsAvailable;
+
+    // Stats run left-to-right as columns, splits run top-to-bottom as
+    // rows -- matches the reference layout (read one split's full line
+    // across, rather than scrolling down a column per split).
+    const cols = [
+      { label: 'Pitches', get: s => s.pitches },
+      { label: 'Games', get: s => s.games },
+      { label: 'IP', get: s => s.ipDisplay },
+      { label: 'Hits', get: s => s.hits },
+      { label: 'Runs', get: s => runsAvail ? s.runs : 'N/A' },
+      { label: 'R/G', get: s => runsAvail ? f2(s.runsPerGame) : 'N/A' },
+      { label: 'BB', get: s => s.walks },
+      { label: 'HBP', get: s => s.hbp },
+      { label: 'K', get: s => s.strikeouts },
+      { label: 'K/9', get: s => f2(s.k9) },
+      { label: 'BB/9', get: s => f2(s.bb9) },
+      { label: 'ERA*', get: s => runsAvail ? f2(s.era) : 'N/A' },
+      { label: 'FIP', get: s => f2(s.fip) },
+      { label: 'WHIP', get: s => f2(s.whip) },
+      { label: 'K:BB', get: s => f2(s.kbb) },
+    ];
+    const splitRows = [
+      { label: 'Overall', stats: overall },
+      { label: 'vs RHH', stats: vsR },
+      { label: 'vs LHH', stats: vsL },
+    ];
 
     return `
       <div style="display:flex;gap:16px;flex-wrap:wrap;">
@@ -727,34 +754,13 @@
         <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Spray Chart (Hits Allowed)</div>${spray}</div>
       </div>
       <div class="section-label">Team Pitching Stats</div>
+      <div style="overflow-x:auto;">
       <table class="stat-table">
-        <tr><th>Stat</th><th>Overall</th><th>vs RHH</th><th>vs LHH</th></tr>
-        <tr><td>Pitches</td><td>${overall.pitches}</td><td>${vsR.pitches}</td><td>${vsL.pitches}</td></tr>
-        <tr><td>Games</td><td>${overall.games}</td><td>—</td><td>—</td></tr>
-        <tr><td>Innings Pitched</td><td>${overall.ipDisplay}</td><td>${vsR.ipDisplay}</td><td>${vsL.ipDisplay}</td></tr>
-        <tr><td>Hits</td><td>${overall.hits}</td><td>${vsR.hits}</td><td>${vsL.hits}</td></tr>
-        ${overall.runsAvailable ? `
-        <tr><td>Runs</td><td>${overall.runs}</td><td>${vsR.runs ?? '-'}</td><td>${vsL.runs ?? '-'}</td></tr>
-        <tr><td>Runs Per Game</td><td>${f2(overall.runsPerGame)}</td><td>—</td><td>—</td></tr>
-        ` : `
-        <tr><td>Runs</td><td colspan="3">Not available for this data yet -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games won't have it retroactively</td></tr>
-        <tr><td>Runs Per Game</td><td colspan="3">Not available yet (same reason as Runs)</td></tr>
-        `}
-        <tr><td>BB</td><td>${overall.walks}</td><td>${vsR.walks}</td><td>${vsL.walks}</td></tr>
-        <tr><td>HBP</td><td>${overall.hbp}</td><td>${vsR.hbp}</td><td>${vsL.hbp}</td></tr>
-        <tr><td>K</td><td>${overall.strikeouts}</td><td>${vsR.strikeouts}</td><td>${vsL.strikeouts}</td></tr>
-        <tr><td>K/9</td><td>${f2(overall.k9)}</td><td>${f2(vsR.k9)}</td><td>${f2(vsL.k9)}</td></tr>
-        <tr><td>BB/9</td><td>${f2(overall.bb9)}</td><td>${f2(vsR.bb9)}</td><td>${f2(vsL.bb9)}</td></tr>
-        ${overall.runsAvailable ? `
-        <tr><td>ERA*</td><td>${f2(overall.era)}</td><td>${f2(vsR.era)}</td><td>${f2(vsL.era)}</td></tr>
-        ` : `
-        <tr><td>ERA</td><td colspan="3">Not available yet (same reason as Runs)</td></tr>
-        `}
-        <tr><td>FIP</td><td>${f2(overall.fip)}</td><td>${f2(vsR.fip)}</td><td>${f2(vsL.fip)}</td></tr>
-        <tr><td>WHIP</td><td>${f2(overall.whip)}</td><td>${f2(vsR.whip)}</td><td>${f2(vsL.whip)}</td></tr>
-        <tr><td>K:BB</td><td>${f2(overall.kbb)}</td><td>${f2(vsR.kbb)}</td><td>${f2(vsL.kbb)}</td></tr>
+        <tr><th>Split</th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>
+        ${splitRows.map(sr => `<tr><td><b>${sr.label}</b></td>${cols.map(c => `<td>${c.get(sr.stats)}</td>`).join('')}</tr>`).join('')}
       </table>
-      <div class="status">Innings Pitched/WHIP/FIP use outs_on_play to estimate outs recorded on balls in play, plus strikeouts -- a reasonable approximation given available data, not a guaranteed-exact box score number. FIP uses a fixed approximate constant (3.10), not a recalculated season-specific one.${overall.runsAvailable ? ' *ERA here uses TOTAL runs allowed, not earned runs specifically -- the API distinguishes earned from unearned runs via a separate field this pipeline does not pull yet, so this is closer to a runs-allowed average than a strict box-score ERA.' : ''} "Games" isn't meaningfully split by batter handedness, so only shown overall.</div>`;
+      </div>
+      <div class="status">Innings Pitched/WHIP/FIP use outs_on_play to estimate outs recorded on balls in play, plus strikeouts -- a reasonable approximation given available data, not a guaranteed-exact box score number. FIP uses a fixed approximate constant (3.10), not a recalculated season-specific one.${runsAvail ? ' *ERA here uses TOTAL runs allowed, not earned runs specifically -- the API distinguishes earned from unearned runs via a separate field this pipeline does not pull yet, so this is closer to a runs-allowed average than a strict box-score ERA.' : ' Runs/R-G/ERA show "N/A" -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games will not have it retroactively.'}</div>`;
   }
 
   async function renderHittingTab(){
@@ -844,6 +850,33 @@
     const f3 = v => v==null ? '-' : (v===Infinity ? '∞' : v.toFixed(3));
     const f2 = v => v==null ? '-' : (v===Infinity ? '∞' : v.toFixed(2));
     const pct = v => v==null ? '-' : (v*100).toFixed(1)+'%';
+    const runsAvail = overall.runsAvailable;
+
+    const cols = [
+      { label: 'Games', get: s => s.games },
+      { label: 'PA', get: s => s.pa },
+      { label: 'AB', get: s => s.ab },
+      { label: 'Hits', get: s => s.hits },
+      { label: '2B', get: s => s.doubles },
+      { label: '3B', get: s => s.triples },
+      { label: 'HR', get: s => s.hr },
+      { label: 'AVG', get: s => f3(s.avg) },
+      { label: 'OBP', get: s => f3(s.obp) },
+      { label: 'SLG', get: s => f3(s.slg) },
+      { label: 'OPS', get: s => f3(s.ops) },
+      { label: 'ISO', get: s => f3(s.iso) },
+      { label: 'wOBA', get: s => f3(s.woba) },
+      { label: 'BABIP', get: s => f3(s.babip) },
+      { label: 'K%', get: s => pct(s.kPct) },
+      { label: 'BB%', get: s => pct(s.bbPct) },
+      { label: 'K:BB', get: s => f2(s.kbb) },
+      { label: 'R/G', get: s => runsAvail ? f2(s.runsPerGame) : 'N/A' },
+    ];
+    const splitRows = [
+      { label: 'Overall', stats: overall },
+      { label: 'vs RHP', stats: vsRHP },
+      { label: 'vs LHP', stats: vsLHP },
+    ];
 
     return `
       <div style="display:flex;gap:16px;flex-wrap:wrap;">
@@ -852,32 +885,13 @@
         <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Spray Chart (Hits)</div>${spray}</div>
       </div>
       <div class="section-label">Team Hitting Stats</div>
+      <div style="overflow-x:auto;">
       <table class="stat-table">
-        <tr><th>Stat</th><th>Overall</th><th>vs RHP</th><th>vs LHP</th></tr>
-        <tr><td>Games</td><td>${overall.games}</td><td>—</td><td>—</td></tr>
-        <tr><td>PA</td><td>${overall.pa}</td><td>${vsRHP.pa}</td><td>${vsLHP.pa}</td></tr>
-        <tr><td>AB</td><td>${overall.ab}</td><td>${vsRHP.ab}</td><td>${vsLHP.ab}</td></tr>
-        <tr><td>Hits</td><td>${overall.hits}</td><td>${vsRHP.hits}</td><td>${vsLHP.hits}</td></tr>
-        <tr><td>2B</td><td>${overall.doubles}</td><td>${vsRHP.doubles}</td><td>${vsLHP.doubles}</td></tr>
-        <tr><td>3B</td><td>${overall.triples}</td><td>${vsRHP.triples}</td><td>${vsLHP.triples}</td></tr>
-        <tr><td>HR</td><td>${overall.hr}</td><td>${vsRHP.hr}</td><td>${vsLHP.hr}</td></tr>
-        <tr><td>AVG</td><td>${f3(overall.avg)}</td><td>${f3(vsRHP.avg)}</td><td>${f3(vsLHP.avg)}</td></tr>
-        <tr><td>OBP</td><td>${f3(overall.obp)}</td><td>${f3(vsRHP.obp)}</td><td>${f3(vsLHP.obp)}</td></tr>
-        <tr><td>SLG</td><td>${f3(overall.slg)}</td><td>${f3(vsRHP.slg)}</td><td>${f3(vsLHP.slg)}</td></tr>
-        <tr><td>OPS</td><td>${f3(overall.ops)}</td><td>${f3(vsRHP.ops)}</td><td>${f3(vsLHP.ops)}</td></tr>
-        <tr><td>ISO</td><td>${f3(overall.iso)}</td><td>${f3(vsRHP.iso)}</td><td>${f3(vsLHP.iso)}</td></tr>
-        <tr><td>wOBA</td><td>${f3(overall.woba)}</td><td>${f3(vsRHP.woba)}</td><td>${f3(vsLHP.woba)}</td></tr>
-        <tr><td>BABIP</td><td>${f3(overall.babip)}</td><td>${f3(vsRHP.babip)}</td><td>${f3(vsLHP.babip)}</td></tr>
-        <tr><td>K%</td><td>${pct(overall.kPct)}</td><td>${pct(vsRHP.kPct)}</td><td>${pct(vsLHP.kPct)}</td></tr>
-        <tr><td>BB%</td><td>${pct(overall.bbPct)}</td><td>${pct(vsRHP.bbPct)}</td><td>${pct(vsLHP.bbPct)}</td></tr>
-        <tr><td>K:BB</td><td>${f2(overall.kbb)}</td><td>${f2(vsRHP.kbb)}</td><td>${f2(vsLHP.kbb)}</td></tr>
-        ${overall.runsAvailable ? `
-        <tr><td>Runs Per Game</td><td>${overall.runsPerGame.toFixed(2)}</td><td>—</td><td>—</td></tr>
-        ` : `
-        <tr><td>Runs Per Game</td><td colspan="3">Not available for this data yet -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games won't have it retroactively</td></tr>
-        `}
+        <tr><th>Split</th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>
+        ${splitRows.map(sr => `<tr><td><b>${sr.label}</b></td>${cols.map(c => `<td>${c.get(sr.stats)}</td>`).join('')}</tr>`).join('')}
       </table>
-      <div class="status">AB/OBP/BABIP use simplified denominators (sacrifice flies aren't broken out separately in this data). wOBA uses a standard-ish fixed weight set, not a recalculated season-specific one. "Games" isn't meaningfully split by pitcher handedness, so only shown overall.</div>`;
+      </div>
+      <div class="status">AB/OBP/BABIP use simplified denominators (sacrifice flies aren't broken out separately in this data). wOBA uses a standard-ish fixed weight set, not a recalculated season-specific one.${runsAvail ? '' : ' R/G shows "N/A" -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games will not have it retroactively.'}</div>`;
   }
 
   async function renderPitcherDetail(pitcherId, pitcherName){
@@ -891,13 +905,14 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side,vert_appr_angle,horz_appr_angle&pitcher_id=eq.${encodeURIComponent(pitcherId)}${dateFilterQS()}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side,vert_appr_angle,horz_appr_angle,inning,top_bottom,pa_of_inning,kor_bb,play_result,outs_on_play,exit_speed,angle,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored&pitcher_id=eq.${encodeURIComponent(pitcherId)}${dateFilterQS()}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
       const games = new Set(rows.map(r => r.trackman_game_id)).size;
 
       const subtabs = [
+        { id: 'overview', label: 'Overview', render: pitchingTeamSubOverview },
         { id: 'results', label: 'Results', render: pitcherSubResults },
         { id: 'metrics', label: 'Metrics', render: pitcherSubMetrics },
         { id: 'locations', label: 'Locations', render: pitcherSubLocations },
@@ -911,7 +926,7 @@
         { id: 'stroverTime', label: 'Strike% Over Time', render: pitcherSubStrikeTime },
         { id: 'flight3d', label: '3D Pitch Flight', render: pitcherSub3DFlightShell, postRender: pitcherSub3DFlightRender },
       ];
-      let activeSub = 'results';
+      let activeSub = 'overview';
       function renderShell(){
         detailDiv.innerHTML = `
           <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
@@ -1373,14 +1388,15 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitch_call,exit_speed,angle,plate_loc_side,plate_loc_height,attack_zone,balls,strikes,tagged_pitch_type,sds&batter_id=eq.${encodeURIComponent(batterId)}${dateFilterQS()}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitch_call,exit_speed,angle,plate_loc_side,plate_loc_height,attack_zone,balls,strikes,tagged_pitch_type,sds,inning,top_bottom,pa_of_inning,kor_bb,play_result,pitcher_throws,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored&batter_id=eq.${encodeURIComponent(batterId)}${dateFilterQS()}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
       const games = new Set(rows.map(r => r.trackman_game_id)).size;
 
       const subtabs = [
-        { id: 'overview', label: 'Overview', render: hitterSubOverview },
+        { id: 'overview', label: 'Overview', render: hittingTeamSubOverview },
+        { id: 'outcomes', label: 'Outcomes', render: hitterSubOverview },
         { id: 'sds', label: 'SDS', render: hitterSubSDS },
         { id: 'exitvelo', label: 'Exit Velo', render: hitterSubExitVelo },
         { id: 'izwhiff', label: 'IZ Whiff', render: hitterSubIZWhiff },
