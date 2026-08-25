@@ -74,6 +74,54 @@
   .tab-btn.active { color: white; background: var(--maroon); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
   .tab-btn:disabled { color: #c4bdb4; cursor: default; }
 
+  /* Scoped dark theme for the BC Hitting Lab tab specifically -- matches
+     the reference "Hitter HQ" 3D tool's own dark aesthetic, which is
+     intentionally different from the rest of this app's light BC theme.
+     Every rule here is prefixed with .hitlab-scope so it can't leak out
+     and affect Pitching/Hitting/anything else. */
+  .hitlab-scope { --hl-bg:#0a0d14; --hl-panel:#12161f; --hl-panel2:#1a2030; --hl-border:#262d3d;
+    --hl-text:#e8eaf0; --hl-dim:#8891a5; --hl-gold:#d4b06a;
+    background: var(--hl-bg); color: var(--hl-text); border-radius: 8px; padding: 16px; margin: -8px; }
+  .hitlab-scope select { background: var(--hl-panel2); border: 1px solid var(--hl-border); color: var(--hl-text);
+    padding: 7px 10px; border-radius: 6px; font-size: 12px; }
+  .hitlab-toprow { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; }
+  .hitlab-filters { display: flex; gap: 10px; align-items: center; }
+  .hitlab-filters label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--hl-dim); margin-right: 4px; }
+  .hitlab-view-tabs, .hitlab-cam-tabs { display: flex; gap: 4px; }
+  .hitlab-view-tabs button, .hitlab-cam-tabs button { background: var(--hl-panel2); border: 1px solid var(--hl-border);
+    color: var(--hl-dim); padding: 7px 14px; font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
+    text-transform: uppercase; border-radius: 5px; cursor: pointer; font-family: inherit; }
+  .hitlab-view-tabs button.active { background: white; color: #111; }
+  .hitlab-cam-tabs button.active { background: var(--hl-gold); color: #1a1400; border-color: var(--hl-gold); }
+  .hitlab-cam-tabs { margin: 8px 0; }
+  .hitlab-status { font-size: 11px; color: var(--hl-dim); text-align: right; margin: 4px 0; }
+  .hitlab-panel { background: var(--hl-panel); border: 1px solid var(--hl-border); border-radius: 8px; padding: 4px; }
+  .hitlab-empty { color: var(--hl-dim); font-style: italic; padding: 60px; text-align: center; }
+  .hitlab-legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--hl-dim); padding: 8px 4px; }
+  .hitlab-grad { width: 140px; height: 8px; border-radius: 4px;
+    background: linear-gradient(90deg, #2255cc, #2fb0c8, #57c25a, #e8d23d, #d9453f); }
+
+  .landing-view { background: linear-gradient(160deg, var(--maroon), #6e1a28); border-radius: 10px;
+    padding: 60px 40px; min-height: 420px; }
+  .landing-view h2 { color: var(--gold); text-align: center; font-size: 14px; letter-spacing: 0.12em;
+    text-transform: uppercase; font-weight: 700; margin: 0 0 40px; }
+  .landing-cards { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+  .landing-card { width: 170px; height: 190px; border: 1.5px solid rgba(219,204,166,0.6); border-radius: 10px;
+    background: rgba(255,255,255,0.06); display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 18px; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+  .landing-card:hover { background: rgba(255,255,255,0.13); transform: translateY(-2px); }
+  .landing-card.disabled { cursor: default; opacity: 0.5; }
+  .landing-card.disabled:hover { background: rgba(255,255,255,0.06); transform: none; }
+  .landing-card svg { width: 40px; height: 40px; stroke: var(--gold); fill: none; stroke-width: 1.6; }
+  .landing-card span { color: var(--gold); font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+
+  .hitting-inner-tabs { display: flex; gap: 22px; border-bottom: 1px solid #e0d5c5; margin-bottom: 20px; flex-wrap: wrap; }
+  .inner-tab-btn { background: none; border: none; padding: 0 0 10px; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.03em; text-transform: uppercase; color: #999; cursor: pointer; font-family: inherit;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .inner-tab-btn.active { color: var(--maroon); border-bottom-color: var(--maroon); }
+  .inner-tab-btn:hover:not(.active) { color: #666; }
+
   .section-label {
     font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
     color: #8C2232; border-bottom: 1px solid #e0d5c5; padding-bottom: 4px; margin: 20px 0 8px;
@@ -145,6 +193,28 @@
         <button onclick="clearDateFilter()" style="flex:1;padding:6px;font-size:12px;background:rgba(255,255,255,0.15);border:none;border-radius:4px;cursor:pointer;color:white;">Clear</button>
       </div>
 
+      <div id="backToSelectionWrap" style="display:none;">
+        <div class="sidebar-divider"></div>
+        <div class="settings-toggle" onclick="goBackToSelection()">&larr; Back to Selection</div>
+      </div>
+
+      <div id="hittingFiltersWrap" style="display:none;">
+        <div class="sidebar-divider"></div>
+        <label for="seasonSelect">Season</label>
+        <select id="seasonSelect" onchange="onHittingFilterChange()" style="width:100%;padding:8px;border-radius:6px;border:none;font-size:13px;"></select>
+
+        <label for="hitterSelect" style="margin-top:10px;display:block;">Hitter</label>
+        <select id="hitterSelect" onchange="onHittingFilterChange()" style="width:100%;padding:8px;border-radius:6px;border:none;font-size:13px;">
+          <option value="all">All</option>
+        </select>
+        <div id="hitterCountLabel" class="status" style="color:var(--gold);opacity:0.85;"></div>
+
+        <label for="gameSelect" style="margin-top:10px;display:block;">Game(s)</label>
+        <select id="gameSelect" onchange="onHittingFilterChange()" style="width:100%;padding:8px;border-radius:6px;border:none;font-size:13px;">
+          <option value="all">All</option>
+        </select>
+      </div>
+
       <div class="sidebar-divider"></div>
       <div class="settings-toggle" onclick="toggleSettings()">Advanced: change data source</div>
       <div class="settings-box" id="settingsBox">
@@ -157,12 +227,6 @@
     </div>
 
     <div class="main">
-      <div class="tabs-nav">
-        <button class="tab-btn active" data-tab="pitching">Pitching</button>
-        <button class="tab-btn" data-tab="hitting">Hitting</button>
-        <button class="tab-btn" data-tab="hittinglab">Hitting Lab</button>
-        <button class="tab-btn" disabled title="Not part of this rebuild yet">Scout</button>
-      </div>
       <div id="tabContent"></div>
     </div>
   </div>
@@ -200,6 +264,106 @@
     if (['CH','SP','FS'].includes(t)) return 'Offspeed';
     return 'Other';
   }
+  // Two-bucket version used specifically by the Exit Velo Charts/Swing
+  // Decisions/Takes tabs, matching the reference's "FB" vs "OS/BB" split
+  // (breaking and offspeed pitches grouped together as one bucket there).
+  function pitchFamilyFBvsOS(type){
+    return pitchFamily(type) === 'Fastball' ? 'FB' : 'OS/BB';
+  }
+  // Display names for the Advanced/Exit Velo Stats "By Pitch Type" rows,
+  // matching the reference's exact labels.
+  const PITCH_TYPE_DISPLAY = {
+    FA: 'Fastball', FF: 'Fastball', FT: 'TwoSeam', SI: 'Sinker', FC: 'Cutter',
+    CH: 'ChangeUp', FS: 'Splitter', SL: 'Slider', CU: 'Curveball', CB: 'Curveball',
+    KC: 'Curveball', SW: 'Sweeper', ST: 'Sweeper', KN: 'Knuckleball',
+  };
+  function pitchTypeDisplay(type){
+    if (!type) return 'Undefined';
+    return PITCH_TYPE_DISPLAY[type.toUpperCase()] || 'Other';
+  }
+  // EV-bucket classification/coloring used by the Exit Velo Charts tab.
+  function evBucket(ev){
+    if (ev == null) return null;
+    if (ev >= 95) return '95+';
+    if (ev >= 75) return '75-95';
+    return '0-74';
+  }
+  const EV_BUCKET_COLORS = { '0-74': '#d9453f', '75-95': '#e8b93d', '95+': '#3fae4e' };
+  // Individual pitch-type colors for the Swing Decisions/Takes scatter
+  // charts, matching the reference's legend as closely as I can without
+  // pixel-sampling the actual image.
+  const PITCH_TYPE_SCATTER_COLORS = {
+    CH: '#3fae4e', CU: '#5aa3e0', CT: '#7a2e2e', FB: '#d9455f', FA: '#d9455f', FF: '#d9455f',
+    SI: '#e8843d', SL: '#e8d23d', SP: '#3da89c', FS: '#3da89c', SW: '#c9a45c', '2S': '#e8843d', FT: '#e8843d',
+  };
+  function pitchTypeScatterColor(type){
+    if (!type) return '#999';
+    return PITCH_TYPE_SCATTER_COLORS[type.toUpperCase()] || '#999';
+  }
+
+  // White-background, blue-to-red heat map -- distinct from
+  // zoneHeatmapSVG (dark background, used for the Pitching tab's density
+  // maps). Built specifically per the request to match TruMedia's own
+  // Heat Map style (light background, blue-green-yellow-red gradient)
+  // rather than the darker style used elsewhere in this app.
+  function whiteHeatmapSVG(rows, opts={}){
+    const w = opts.width || 220, h = opts.height || 240;
+    const grid = 14;
+    const cellW = w/grid, cellH = h/grid;
+    const sx = v => (v+ZONE_RANGE)/(2*ZONE_RANGE)*w;
+    const sy = v => h - (v+ZONE_RANGE)/(2*ZONE_RANGE)*h;
+    const pts = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null);
+    const bins = new Array(grid*grid).fill(0);
+    pts.forEach(r => {
+      const bx = Math.min(grid-1, Math.max(0, Math.floor((r.plate_loc_side+ZONE_RANGE)/(2*ZONE_RANGE)*grid)));
+      const by = Math.min(grid-1, Math.max(0, Math.floor((h - (r.plate_loc_height+ZONE_RANGE)/(2*ZONE_RANGE)*h) / cellH)));
+      bins[by*grid+bx]++;
+    });
+    const maxBin = Math.max(1, ...bins);
+    // Blue -> cyan -> green -> yellow -> red, matching TruMedia's own gradient
+    const stops = [[0,'#2255cc'],[0.3,'#2fb0c8'],[0.55,'#57c25a'],[0.78,'#e8d23d'],[1,'#d9453f']];
+    function lerpHex(a,b,t){
+      const pa=[1,3,5].map(i=>parseInt(a.slice(i,i+2),16));
+      const pb=[1,3,5].map(i=>parseInt(b.slice(i,i+2),16));
+      const p=pa.map((v,i)=>Math.round(v+(pb[i]-v)*t));
+      return `rgb(${p[0]},${p[1]},${p[2]})`;
+    }
+    function heatColor(t){
+      for (let i=0;i<stops.length-1;i++){
+        if (t <= stops[i+1][0]) {
+          const [t0,c0]=stops[i], [t1,c1]=stops[i+1];
+          return lerpHex(c0,c1,(t-t0)/(t1-t0 || 1));
+        }
+      }
+      return stops[stops.length-1][1];
+    }
+    const blurId = `wh${Math.random().toString(36).slice(2,8)}`;
+    let cells = '';
+    for (let by=0; by<grid; by++){
+      for (let bx=0; bx<grid; bx++){
+        const t = bins[by*grid+bx] / maxBin;
+        if (t <= 0) continue;
+        cells += `<rect x="${(bx*cellW).toFixed(1)}" y="${(by*cellH).toFixed(1)}" width="${cellW.toFixed(1)}" height="${cellH.toFixed(1)}" fill="${heatColor(t)}"/>`;
+      }
+    }
+    const zoneRect = `<rect x="${sx(-1).toFixed(1)}" y="${sy(1).toFixed(1)}" width="${(sx(1)-sx(-1)).toFixed(1)}" height="${(sy(-1)-sy(1)).toFixed(1)}" fill="none" stroke="#333" stroke-width="1.5"/>`;
+    if (pts.length === 0) {
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:white;border:1px solid #eee;border-radius:6px;display:block;">${zoneRect}
+        <text x="${w/2}" y="${h/2}" text-anchor="middle" fill="#bbb" font-size="11">No data</text></svg>`;
+    }
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:white;border:1px solid #eee;border-radius:6px;display:block;">
+      <defs><filter id="${blurId}" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="${(cellW*0.55).toFixed(2)}"/></filter></defs>
+      <g filter="url(#${blurId})">${cells}</g>
+      ${zoneRect}
+    </svg>`;
+  }
+
+  // Approximate real-feet plate coordinates for the reference-style
+  // scatter charts specifically (which use a 0-5 ft vertical / -2-2 ft
+  // horizontal axis, not this app's normalized zone units elsewhere) --
+  // same conversion assumptions used for the 3D pitch flight chart.
+  function approxRealFeetX(normSide){ return normSide * 0.95; }
+  function approxRealFeetZ(normHeight){ return 2.5 + normHeight * 1.0; }
 
   function zoneScatterSVG(rows, opts={}){
     const w = opts.width || 260, h = opts.height || 280;
@@ -458,7 +622,7 @@
     const runs = runsAvailable ? rows.reduce((s,r) => s + (r.runs_scored || 0), 0) : null;
     const runsPerGame = (runsAvailable && games > 0) ? (runs / games) : null;
 
-    return { games, pa, ab, hits, doubles, triples, hr, avg, obp, slg, ops, iso, woba, babip, kPct, bbPct, kbb, singles, walks, strikeouts, runs, runsPerGame, runsAvailable };
+    return { games, pa, ab, hits, doubles, triples, hr, avg, obp, slg, ops, iso, woba, babip, kPct, bbPct, kbb, singles, walks, strikeouts, runs, runsPerGame, runsAvailable, hbp, tb: totalBases };
   }
 
   // Generic scatter with explicit axes -- unlike zoneScatterSVG (which is
@@ -547,7 +711,7 @@
     document.getElementById('dateTo').value = '';
     renderActiveTab();
   }
-  let activeTab = 'pitching';
+  let activeTab = null;
 
   const urlInput = document.getElementById('url');
   const keyInput = document.getElementById('key');
@@ -646,19 +810,50 @@
   // Single dispatcher so switching teams always refreshes whichever tab is
   // actually showing, instead of a hardcoded assumption of which one that is.
   function renderActiveTab(){
-    if (activeTab === 'pitching') renderPitchingTab();
+    document.getElementById('backToSelectionWrap').style.display = activeTab === null ? 'none' : 'block';
+    if (activeTab === null) renderLandingView();
+    else if (activeTab === 'pitching') renderPitchingTab();
     else if (activeTab === 'hitting') renderHittingTab();
     else if (activeTab === 'hittinglab') renderHittingLabTab();
   }
+  function goBackToSelection(){
+    activeTab = null;
+    renderActiveTab();
+  }
 
-  document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      activeTab = btn.dataset.tab;
-      renderActiveTab();
+  const LANDING_ICONS = {
+    hitting: '<svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="1.8" fill="var(--gold)" stroke="none"/><line x1="7.2" y1="16.8" x2="17" y2="7" stroke-linecap="round"/><polyline points="10,7 17,7 17,14" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    pitching: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5 8c3 2 3 6 0 8M19 8c-3 2-3 6 0 8" stroke-linecap="round"/></svg>',
+    scout: '<svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><line x1="15" y1="15" x2="20.5" y2="20.5" stroke-linecap="round"/></svg>',
+    hittinglab: '<svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5.5 9.5A1.5 1.5 0 0 0 5.8 21h12.4a1.5 1.5 0 0 0 1.3-2.5L14 9V3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
+
+  function renderLandingView(){
+    const content = document.getElementById('tabContent');
+    const cards = [
+      { id: 'hitting', label: 'Hitting', enabled: true },
+      { id: 'pitching', label: 'Pitching', enabled: true },
+      { id: 'scout', label: 'Scout', enabled: false },
+      { id: 'hittinglab', label: 'Hitting Lab', enabled: true },
+    ];
+    content.innerHTML = `
+      <div class="landing-view">
+        <h2>Select a View</h2>
+        <div class="landing-cards">
+          ${cards.map(c => `
+            <div class="landing-card ${c.enabled ? '' : 'disabled'}" data-view="${c.id}" ${c.enabled ? '' : 'title="Not part of this rebuild yet"'}>
+              ${LANDING_ICONS[c.id]}
+              <span>${c.label}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    content.querySelectorAll('.landing-card:not(.disabled)').forEach(card => {
+      card.addEventListener('click', () => {
+        activeTab = card.dataset.view;
+        renderActiveTab();
+      });
     });
-  });
+  }
 
   // ---- Pitching tab: team pitcher list -> pitcher detail ----
   async function renderPitchingTab(){
@@ -854,49 +1049,500 @@
       <div class="status">Innings Pitched/WHIP/FIP use outs_on_play to estimate outs recorded on balls in play, plus strikeouts -- a reasonable approximation given available data, not a guaranteed-exact box score number. FIP uses a fixed approximate constant (3.10), not a recalculated season-specific one.${runsAvail ? ' *ERA here uses TOTAL runs allowed, not earned runs specifically -- the API distinguishes earned from unearned runs via a separate field this pipeline does not pull yet, so this is closer to a runs-allowed average than a strict box-score ERA.' : ' Runs/R-G/ERA show "N/A" -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games will not have it retroactively.'}</div>`;
   }
 
+  let hittingSelectedSeason = null;
+  let hittingSelectedHitterId = 'all';
+  let hittingSelectedGameId = 'all';
+  let hittingActiveInnerTab = 'traditional';
+
+  async function populateHittingFilters(){
+    const seasonResp = await fetch(`${apiBase()}/rest/v1/pitches?select=season_year&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
+    const seasonRows = await seasonResp.json();
+    const seasons = [...new Set(seasonRows.map(r => r.season_year).filter(s => s != null))].sort((a,b) => b-a);
+    if (hittingSelectedSeason === null && seasons.length) hittingSelectedSeason = seasons[0];
+    const seasonSelect = document.getElementById('seasonSelect');
+    seasonSelect.innerHTML = seasons.map(s => `<option value="${s}" ${String(s)===String(hittingSelectedSeason)?'selected':''}>${s}</option>`).join('');
+
+    const hitterResp = await fetch(`${apiBase()}/rest/v1/pitches?select=batter_id,batter&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
+    const hitterRows = await hitterResp.json();
+    const hitterMap = new Map();
+    hitterRows.forEach(r => { if (r.batter_id) hitterMap.set(r.batter_id, r.batter); });
+    document.getElementById('hitterCountLabel').textContent = `${hitterMap.size} hitter(s) in range`;
+    const hitterSelect = document.getElementById('hitterSelect');
+    hitterSelect.innerHTML = `<option value="all">All</option>` +
+      [...hitterMap.entries()].sort((a,b)=>a[1].localeCompare(b[1]))
+        .map(([id,name]) => `<option value="${id}" ${id===hittingSelectedHitterId?'selected':''}>${name}</option>`).join('');
+
+    const gameResp = await fetch(`${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitcher_team&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
+    const gameRows = await gameResp.json();
+    const gameMap = new Map();
+    gameRows.forEach(r => { if (r.trackman_game_id) gameMap.set(r.trackman_game_id, `${r.date || '?'} vs ${r.pitcher_team || '?'}`); });
+    const gameSelect = document.getElementById('gameSelect');
+    const sortedGames = [...gameMap.entries()].sort((a,b) => b[1].localeCompare(a[1]));
+    gameSelect.innerHTML = `<option value="all">All</option>` +
+      sortedGames.map(([id,label]) => `<option value="${id}" ${id===hittingSelectedGameId?'selected':''}>${label}</option>`).join('');
+  }
+
+  function onHittingFilterChange(){
+    hittingSelectedSeason = document.getElementById('seasonSelect').value;
+    hittingSelectedHitterId = document.getElementById('hitterSelect').value;
+    hittingSelectedGameId = document.getElementById('gameSelect').value;
+    renderHittingTab();
+  }
+
   async function renderHittingTab(){
     const content = document.getElementById('tabContent');
+    document.getElementById('hittingFiltersWrap').style.display = 'block';
     if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
     content.innerHTML = `<div class="status">Loading...</div>`;
 
     try {
-      const fields = 'batter_id,batter,pitch_call,plate_loc_side,plate_loc_height,exit_speed,angle,play_result,kor_bb,pitcher_throws,trackman_game_id,inning,top_bottom,pa_of_inning,sds,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored';
-      const url = `${apiBase()}/rest/v1/pitches?select=${fields}&batter_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
+      await populateHittingFilters();
+
+      const fields = 'batter_id,batter,pitch_call,plate_loc_side,plate_loc_height,exit_speed,angle,play_result,kor_bb,pitcher_throws,tagged_pitch_type,trackman_game_id,season_year,date,inning,top_bottom,pa_of_inning,sds,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored,attack_zone,balls,strikes,x_avg,x_slg,x_woba';
+      let url = `${apiBase()}/rest/v1/pitches?select=${fields}&batter_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
+      if (hittingSelectedSeason) url += `&season_year=eq.${encodeURIComponent(hittingSelectedSeason)}`;
+      if (hittingSelectedHitterId !== 'all') url += `&batter_id=eq.${encodeURIComponent(hittingSelectedHitterId)}`;
+      if (hittingSelectedGameId !== 'all') url += `&trackman_game_id=eq.${encodeURIComponent(hittingSelectedGameId)}`;
+
       const resp = await fetch(url, { headers: headers() });
       if (!resp.ok) { content.innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
       const rows = await resp.json();
       document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
       if (rows.length === 0) {
-        content.innerHTML = `<div class="empty-msg">No pitches ingested for ${currentTeamName} yet -- the backfill may not have reached their games.</div>`;
+        content.innerHTML = `<div class="empty-msg">No pitches match these filters.</div>`;
         return;
       }
 
-      const subtabs = [
-        { id: 'overview', label: 'Overview', render: hittingTeamSubOverview },
-        { id: 'roster', label: 'Roster', render: hittingTeamSubRoster },
+      const innerTabs = [
+        { id: 'traditional', label: 'Traditional Stats', render: hittingSubTraditionalStats },
+        { id: 'advanced', label: 'Advanced Stats', render: hittingSubAdvancedStats },
+        { id: 'exitvelostats', label: 'Exit Velo Stats', render: hittingSubExitVeloStats },
+        { id: 'exitvelocharts', label: 'Exit Velo Charts', render: hittingSubExitVeloCharts },
+        { id: 'izwhiff2', label: 'IZ Whiff', render: hittingSubIZWhiff },
+        { id: 'chase2', label: 'Chase', render: hittingSubChase },
+        { id: 'swingdec2', label: 'Swing Decisions', render: hittingSubSwingDecisions },
+        { id: 'takes2', label: 'Takes', render: hittingSubTakes },
+        { id: 'sds2', label: 'SDS', render: hittingSubSDS },
+        { id: 'sequences', label: 'Sequences', render: hittingSubSequences },
       ];
-      let activeSub = 'overview';
-      function renderShell(){
+      function renderInnerShell(){
         content.innerHTML = `
-          <div class="subtabs-nav">
-            ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+          <div class="hitting-inner-tabs">
+            ${innerTabs.map(t => `<button class="inner-tab-btn ${t.id===hittingActiveInnerTab?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
           </div>
-          <div id="teamSubContent"></div>`;
-        content.querySelectorAll('.subtab-btn').forEach(btn => {
-          btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
+          <div id="hittingInnerContent"></div>`;
+        content.querySelectorAll('.inner-tab-btn').forEach(btn => {
+          btn.addEventListener('click', () => { hittingActiveInnerTab = btn.dataset.sub; renderInnerShell(); });
         });
-        document.getElementById('teamSubContent').innerHTML = subtabs.find(t => t.id === activeSub).render(rows);
-        if (activeSub === 'roster') {
-          document.querySelectorAll('#teamSubContent tr[data-id]').forEach(row => {
-            row.addEventListener('click', () => renderHitterDetail(row.dataset.id, row.dataset.name));
-          });
-          makeSortableTable(document.querySelector('#teamSubContent table'));
-        }
+        const activeDef = innerTabs.find(t => t.id === hittingActiveInnerTab);
+        document.getElementById('hittingInnerContent').innerHTML = activeDef.render
+          ? activeDef.render(rows)
+          : `<div class="empty-msg" style="padding:40px 10px;">"${activeDef.label}" is coming in a follow-up pass -- not built yet.</div>`;
       }
-      renderShell();
+      renderInnerShell();
     } catch (e) {
       content.innerHTML = `<div class="empty-msg">${e.message}</div>`;
     }
+  }
+
+  // Matches the reference's exact column set: Pitches, PA, AB, H, 1B, 2B,
+  // 3B, HR, TB, SO, HBP, BB, AVG, OBP, SLG, OPS -- Overall, then split by
+  // pitcher hand (Left/Right).
+  // ---- Advanced Stats ----
+  // wRC+ and OPS+ need a league-wide/park-adjusted baseline this app has
+  // never computed (would require querying every D1 team's data, not
+  // just the selected one) -- shown as N/A rather than guessed at with a
+  // made-up constant that would look plausible but be wrong.
+  function computeAdvancedStats(rows){
+    const stats = computeHittingStats(rows);
+    const bipRows = rows.filter(r => r.pitch_call === 'IP');
+    const bip = bipRows.length;
+    const paBip = dedupeByPA(bipRows);
+    const s1 = paBip.filter(r => r.play_result === 'Single').length;
+    const d2 = paBip.filter(r => r.play_result === 'Double').length;
+    const t3 = paBip.filter(r => r.play_result === 'Triple').length;
+    const hr = paBip.filter(r => ['HomeRun','HR'].includes(r.play_result)).length;
+    const wobaConDen = paBip.length;
+    const wobaCon = wobaConDen > 0 ? (0.89*s1 + 1.27*d2 + 1.62*t3 + 2.10*hr) / wobaConDen : null;
+    const xbaRows = rows.filter(r => r.x_avg != null);
+    const xba = xbaRows.length ? xbaRows.reduce((s,r)=>s+r.x_avg,0)/xbaRows.length : null;
+    const xslgRows = rows.filter(r => r.x_slg != null);
+    const xslg = xslgRows.length ? xslgRows.reduce((s,r)=>s+r.x_slg,0)/xslgRows.length : null;
+    const xwobaRows = rows.filter(r => r.x_woba != null);
+    const xwoba = xwobaRows.length ? xwobaRows.reduce((s,r)=>s+r.x_woba,0)/xwobaRows.length : null;
+    return { bip, babip: stats.babip, xba, xslg, woba: stats.woba, wobaCon, xwoba, iso: stats.iso };
+  }
+
+  function hittingSubAdvancedStats(rows){
+    const f3 = v => v == null ? '-' : v.toFixed(3);
+    const cols = [
+      { label: 'BIP', get: s => s.bip },
+      { label: 'BABIP', get: s => f3(s.babip) },
+      { label: 'xBA', get: s => f3(s.xba) },
+      { label: 'xSLG', get: s => f3(s.xslg) },
+      { label: 'wOBA', get: s => f3(s.woba) },
+      { label: 'wOBAcon', get: s => f3(s.wobaCon) },
+      { label: 'xwOBA', get: s => f3(s.xwoba) },
+      { label: 'ISO', get: s => f3(s.iso) },
+      { label: 'wRC+', get: () => 'N/A' },
+      { label: 'OPS+', get: () => 'N/A' },
+    ];
+    const overall = computeAdvancedStats(rows);
+    const vsL = computeAdvancedStats(rows.filter(r => r.pitcher_throws === 'L'));
+    const vsR = computeAdvancedStats(rows.filter(r => r.pitcher_throws === 'R'));
+    const byPitch = {};
+    rows.forEach(r => {
+      const disp = pitchTypeDisplay(r.tagged_pitch_type);
+      byPitch[disp] = byPitch[disp] || [];
+      byPitch[disp].push(r);
+    });
+    const pitchOrder = ['Fastball','TwoSeam','Sinker','Cutter','ChangeUp','Splitter','Slider','Curveball','Sweeper','Other','Undefined','Knuckleball'];
+
+    return `
+      <div class="section-label" style="margin-top:0;">Overall</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        <tr>${cols.map(c=>`<td>${c.get(overall)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitcher Hand</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Side</th>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        <tr><td><b>Left</b></td>${cols.map(c=>`<td>${c.get(vsL)}</td>`).join('')}</tr>
+        <tr><td><b>Right</b></td>${cols.map(c=>`<td>${c.get(vsR)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitch Type</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Pitch</th>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        ${pitchOrder.filter(p => byPitch[p]).map(p => {
+          const s = computeAdvancedStats(byPitch[p]);
+          return `<tr><td>${p}</td>${cols.map(c=>`<td>${c.get(s)}</td>`).join('')}</tr>`;
+        }).join('')}
+      </table></div>
+      <div class="status">wRC+/OPS+ need a league-wide baseline (every D1 team's data, not just this one) that this app hasn't computed yet -- shown as N/A rather than a guessed constant. xBA/xSLG/xwOBA come from a recent, unverified addition to the ingestion pipeline -- may show "-" if genuinely unpopulated for this data.</div>`;
+  }
+
+  // ---- Exit Velo Stats ----
+  function computeExitVeloStats(rows){
+    const pitches = rows.length;
+    const bipRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null);
+    const bip = bipRows.length;
+    const avgEV = bip ? bipRows.reduce((s,r)=>s+r.exit_speed,0)/bip : null;
+    const maxEV = bip ? Math.max(...bipRows.map(r=>r.exit_speed)) : null;
+    const hit95Pct = bip ? bipRows.filter(r=>r.exit_speed>=95).length/bip : null;
+    const laRows = bipRows.filter(r=>r.angle!=null);
+    const la1030Pct = laRows.length ? laRows.filter(r=>r.angle>=10&&r.angle<=30).length/laRows.length : null;
+    const barrelRows = bipRows.filter(r=>r.angle!=null);
+    const barrelPct = barrelRows.length ? barrelRows.filter(r=>r.exit_speed>=95 && r.angle>=10 && r.angle<=35).length/barrelRows.length : null;
+    const distRows = bipRows.filter(r=>r.distance!=null);
+    const maxDist = distRows.length ? Math.max(...distRows.map(r=>r.distance)) : null;
+    const swings = rows.filter(r => SWING_CODES.has(r.pitch_call||''));
+    const contact = swings.filter(r => r.pitch_call==='F'||r.pitch_call==='IP');
+    const contactPct = swings.length ? contact.length/swings.length : null;
+    const zSwings = swings.filter(r => r.attack_zone==='Heart'||r.attack_zone==='Shadow');
+    const zContact = zSwings.filter(r=>r.pitch_call==='F'||r.pitch_call==='IP');
+    const zContactPct = zSwings.length ? zContact.length/zSwings.length : null;
+    const outsideRows = rows.filter(r => r.attack_zone==='Chase'||r.attack_zone==='Waste');
+    const chased = outsideRows.filter(r => SWING_CODES.has(r.pitch_call||''));
+    const chasePct = outsideRows.length ? chased.length/outsideRows.length : null;
+    return { pitches, bip, avgEV, maxEV, hit95Pct, la1030Pct, barrelPct, maxDist, contactPct, zContactPct, chasePct };
+  }
+
+  function hittingSubExitVeloStats(rows){
+    const f1 = v => v == null ? '-' : v.toFixed(1);
+    const pct = v => v == null ? '-' : (v*100).toFixed(1)+'%';
+    const cols = [
+      { label: 'Pitches', get: s => s.pitches },
+      { label: 'BIP', get: s => s.bip },
+      { label: 'AvgEV', get: s => f1(s.avgEV) },
+      { label: 'MaxEV', get: s => f1(s.maxEV) },
+      { label: 'Hit95+%', get: s => pct(s.hit95Pct) },
+      { label: 'LA10-30%', get: s => pct(s.la1030Pct) },
+      { label: 'Barrel%', get: s => pct(s.barrelPct) },
+      { label: 'MaxDist', get: s => f1(s.maxDist) },
+      { label: 'Contact%', get: s => pct(s.contactPct) },
+      { label: 'Z-Contact%', get: s => pct(s.zContactPct) },
+      { label: 'Chase%', get: s => pct(s.chasePct) },
+    ];
+    const overall = computeExitVeloStats(rows);
+    const vsL = computeExitVeloStats(rows.filter(r => r.pitcher_throws === 'L'));
+    const vsR = computeExitVeloStats(rows.filter(r => r.pitcher_throws === 'R'));
+    const byPitch = {};
+    rows.forEach(r => { const d = pitchTypeDisplay(r.tagged_pitch_type); byPitch[d] = byPitch[d] || []; byPitch[d].push(r); });
+    const pitchOrder = ['Fastball','TwoSeam','Sinker','Cutter','ChangeUp','Splitter','Slider','Curveball','Sweeper','Other','Undefined','Knuckleball'];
+
+    return `
+      <div class="section-label" style="margin-top:0;">Overall</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        <tr>${cols.map(c=>`<td>${c.get(overall)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitcher Hand</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Side</th>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        <tr><td><b>Left</b></td>${cols.map(c=>`<td>${c.get(vsL)}</td>`).join('')}</tr>
+        <tr><td><b>Right</b></td>${cols.map(c=>`<td>${c.get(vsR)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitch Type</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Pitch</th>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        ${pitchOrder.filter(p => byPitch[p]).map(p => {
+          const s = computeExitVeloStats(byPitch[p]);
+          return `<tr><td>${p}</td>${cols.map(c=>`<td>${c.get(s)}</td>`).join('')}</tr>`;
+        }).join('')}
+      </table></div>
+      <div class="status">MaxDist relies on a field confirmed populated for only ~6% of balls in play -- most rows genuinely won't have it, not a bug. Z-Contact% approximates "in zone" using this app's Heart+Shadow location buckets, not a literal rulebook zone test.</div>`;
+  }
+
+  // ---- Exit Velo Charts: scatter colored by EV bucket, crossed by hand x pitch family (FB / OS+BB) ----
+  function evScatterPanel(rows, title){
+    const pts = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null && r.plate_loc_side != null && r.plate_loc_height != null);
+    const chart = pts.length ? axisScatterSVG(pts.map(r => ({...r, _rx: approxRealFeetX(r.plate_loc_side), _rz: approxRealFeetZ(r.plate_loc_height)})), {
+      xField: '_rx', yField: '_rz', xMin: -2.5, xMax: 2.5, yMin: 0, yMax: 5,
+      xLabel: 'Horizontal Location', yLabel: 'Vertical Location',
+      colorFn: r => EV_BUCKET_COLORS[evBucket(r.exit_speed)] || '#999', width: 260, height: 260,
+    }) : '<div class="empty-msg" style="padding:30px;">No balls in play</div>';
+    return `<div class="chart-card"><div class="chart-card-header">${title}</div><div class="chart-card-body">${chart}
+      <div style="margin-top:4px;font-size:10px;color:#666;">
+        <span style="color:${EV_BUCKET_COLORS['0-74']};">&#9679;</span> 0-74
+        <span style="color:${EV_BUCKET_COLORS['75-95']};margin-left:8px;">&#9679;</span> 75-95
+        <span style="color:${EV_BUCKET_COLORS['95+']};margin-left:8px;">&#9679;</span> 95+
+      </div></div></div>`;
+  }
+  function hittingSubExitVeloCharts(rows){
+    const vsRHP = rows.filter(r => r.pitcher_throws === 'R');
+    const vsLHP = rows.filter(r => r.pitcher_throws === 'L');
+    return `
+      <div class="section-label" style="margin-top:0;">vs RHP</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${evScatterPanel(vsRHP, 'Exit Velo vs RHP')}
+        ${evScatterPanel(vsRHP.filter(r => pitchFamilyFBvsOS(r.tagged_pitch_type)==='FB'), 'Exit Velo vs RHP — FB')}
+        ${evScatterPanel(vsRHP.filter(r => pitchFamilyFBvsOS(r.tagged_pitch_type)==='OS/BB'), 'Exit Velo vs RHP — OS/BB')}
+      </div>
+      <div class="section-label">vs LHP</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${evScatterPanel(vsLHP, 'Exit Velo vs LHP')}
+        ${evScatterPanel(vsLHP.filter(r => pitchFamilyFBvsOS(r.tagged_pitch_type)==='FB'), 'Exit Velo vs LHP — FB')}
+        ${evScatterPanel(vsLHP.filter(r => pitchFamilyFBvsOS(r.tagged_pitch_type)==='OS/BB'), 'Exit Velo vs LHP — OS/BB')}
+      </div>
+      <div class="status">Horizontal/Vertical Location are converted from this app's normalized zone coordinates to an approximate real-feet position for visual consistency -- treat as illustrative, not exact.</div>`;
+  }
+
+  // ---- IZ Whiff / Chase: white heat maps crossed by hand x pitch family (All/FB/OS/BB, 3-way split) ----
+  function heatPanel(rows, title){
+    const n = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null).length;
+    return `<div class="chart-card"><div class="chart-card-header">${title} (n=${n})</div><div class="chart-card-body">${whiteHeatmapSVG(rows, {width:220,height:230})}</div></div>`;
+  }
+  function izWhiffOrChasePanels(rows, filterFn, labelPrefix){
+    const base = rows.filter(filterFn);
+    const vsRHP = base.filter(r => r.pitcher_throws === 'R');
+    const vsLHP = base.filter(r => r.pitcher_throws === 'L');
+    const byFamily = (subset) => ({
+      all: subset,
+      fb: subset.filter(r => pitchFamily(r.tagged_pitch_type) === 'Fastball'),
+      os: subset.filter(r => pitchFamily(r.tagged_pitch_type) === 'Offspeed'),
+      bb: subset.filter(r => pitchFamily(r.tagged_pitch_type) === 'Breaking'),
+    });
+    const r = byFamily(vsRHP), l = byFamily(vsLHP);
+    return `
+      <div class="section-label" style="margin-top:0;">vs RHP</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${heatPanel(r.all, `${labelPrefix} vs RHP`)}
+        ${heatPanel(r.fb, `${labelPrefix} vs RHP FB`)}
+        ${heatPanel(r.os, `${labelPrefix} vs RHP OS`)}
+        ${heatPanel(r.bb, `${labelPrefix} vs RHP BB`)}
+      </div>
+      <div class="section-label">vs LHP</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${heatPanel(l.all, `${labelPrefix} vs LHP`)}
+        ${heatPanel(l.fb, `${labelPrefix} vs LHP FB`)}
+        ${heatPanel(l.os, `${labelPrefix} vs LHP OS`)}
+        ${heatPanel(l.bb, `${labelPrefix} vs LHP BB`)}
+      </div>`;
+  }
+  function hittingSubIZWhiff(rows){
+    return izWhiffOrChasePanels(rows, r => r.pitch_call === 'SS', 'Whiff');
+  }
+  function hittingSubChase(rows){
+    return izWhiffOrChasePanels(rows, r => (r.attack_zone==='Chase'||r.attack_zone==='Waste') && SWING_CODES.has(r.pitch_call||''), 'Chase');
+  }
+
+  // ---- Swing Decisions / Takes: scatter colored by individual pitch type, NOT crossed (hand OR family, not both) ----
+  function pitchTypeScatterPanel(rows, title){
+    const pts = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null);
+    const types = [...new Set(pts.map(r => r.tagged_pitch_type || 'Undefined'))];
+    const chart = pts.length ? zoneScatterSVG(pts.map(r => ({...r, plate_loc_side: approxRealFeetX(r.plate_loc_side), plate_loc_height: approxRealFeetZ(r.plate_loc_height)-2.5})), {
+      colorFn: r => pitchTypeScatterColor(r.tagged_pitch_type), width: 260, height: 260,
+    }) : '<div class="empty-msg" style="padding:30px;">No pitches</div>';
+    const legend = types.map(t => `<span style="display:inline-flex;align-items:center;gap:2px;margin-right:6px;font-size:9px;color:#666;"><span style="width:7px;height:7px;border-radius:50%;background:${pitchTypeScatterColor(t)};display:inline-block;"></span>${t}</span>`).join('');
+    return `<div class="chart-card"><div class="chart-card-header">${title}</div><div class="chart-card-body">${chart}<div style="margin-top:4px;">${legend}</div></div></div>`;
+  }
+  function swingOrTakePanels(rows, filterFn, labelPrefix){
+    const base = rows.filter(filterFn);
+    const vsRHP = base.filter(r => r.pitcher_throws === 'R');
+    const vsLHP = base.filter(r => r.pitcher_throws === 'L');
+    const vsFB = base.filter(r => pitchFamily(r.tagged_pitch_type) === 'Fastball');
+    const vsOS = base.filter(r => pitchFamily(r.tagged_pitch_type) === 'Offspeed');
+    const vsBB = base.filter(r => pitchFamily(r.tagged_pitch_type) === 'Breaking');
+    return `
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${pitchTypeScatterPanel(base, `${labelPrefix} — All`)}
+        ${pitchTypeScatterPanel(vsRHP, `${labelPrefix} vs RHP`)}
+        ${pitchTypeScatterPanel(vsLHP, `${labelPrefix} vs LHP`)}
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;">
+        ${pitchTypeScatterPanel(vsFB, `${labelPrefix} vs FB`)}
+        ${pitchTypeScatterPanel(vsOS, `${labelPrefix} vs OS`)}
+        ${pitchTypeScatterPanel(vsBB, `${labelPrefix} vs BB`)}
+      </div>`;
+  }
+  function hittingSubSwingDecisions(rows){
+    return swingOrTakePanels(rows, r => SWING_CODES.has(r.pitch_call||''), 'Swing Decisions');
+  }
+  function hittingSubTakes(rows){
+    return swingOrTakePanels(rows, r => r.pitch_call === 'B' || r.pitch_call === 'SL', 'Takes');
+  }
+
+  // ---- SDS: team-wide leaderboard, by pitch type, by location with nested zone box ----
+  function hittingSubSDS(rows){
+    if (sdsLeagueMean == null) {
+      return `<div class="empty-msg">SDS hasn't been computed for this database yet -- run enrich_sds.py, then reload.</div>`;
+    }
+    const scored = rows.filter(r => r.sds != null);
+    if (scored.length === 0) {
+      return `<div class="empty-msg">No SDS-scored pitches for these filters yet.</div>`;
+    }
+    const byHitter = {};
+    scored.forEach(r => {
+      byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, sum: 0, n: 0 };
+      byHitter[r.batter_id].sum += r.sds; byHitter[r.batter_id].n++;
+    });
+    const leaderboard = Object.entries(byHitter).map(([id,s]) => {
+      const mean = s.sum/s.n; const { plus, grade } = sdsPlusAndGrade(mean);
+      return { name: s.name, pitches: s.n, mean, plus, grade };
+    }).sort((a,b) => b.plus - a.plus);
+
+    const byPitch = {};
+    scored.forEach(r => {
+      const d = pitchTypeDisplay(r.tagged_pitch_type);
+      byPitch[d] = byPitch[d] || { sum: 0, n: 0 };
+      byPitch[d].sum += r.sds; byPitch[d].n++;
+    });
+    const pitchOrder = ['Fastball','TwoSeam','Sinker','Cutter','ChangeUp','Splitter','Slider','Curveball','Sweeper','Other','Undefined','Knuckleball'];
+
+    const zoneOrder = ['Heart','Shadow','Chase','Waste'];
+    const byZone = {};
+    scored.forEach(r => {
+      if (!r.attack_zone) return;
+      byZone[r.attack_zone] = byZone[r.attack_zone] || { sum: 0, n: 0, swings: 0, whiffs: 0 };
+      byZone[r.attack_zone].sum += r.sds; byZone[r.attack_zone].n++;
+      if (SWING_CODES.has(r.pitch_call||'')) byZone[r.attack_zone].swings++;
+      if (r.pitch_call === 'SS') byZone[r.attack_zone].whiffs++;
+    });
+    const zoneColors = { Heart: '#4a9d5f', Shadow: '#e8843d', Chase: '#e8843d', Waste: '#d9453f' };
+
+    return `
+      <div class="section-label" style="margin-top:0;">Player Leaderboard</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Hitter</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Grade</th></tr>
+        ${leaderboard.map(h => `<tr><td>${h.name}</td><td>${h.pitches}</td><td>${h.mean.toFixed(1)}</td><td>${h.plus}</td><td>${h.grade}</td></tr>`).join('')}
+      </table></div>
+      <div class="section-label">By Pitch Type — Team</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Pitch</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
+        ${pitchOrder.filter(p => byPitch[p]).map(p => {
+          const s = byPitch[p]; const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
+          return `<tr><td>${p}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus}</td></tr>`;
+        }).join('')}
+      </table></div>
+      <div class="section-label">By Location — Team</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
+        <svg viewBox="0 0 200 200" width="200" height="200" style="background:white;border:1px solid #eee;border-radius:6px;">
+          <rect x="10" y="10" width="180" height="180" fill="${zoneColors.Waste}" opacity="0.5"/>
+          <rect x="40" y="40" width="120" height="120" fill="${zoneColors.Chase}" opacity="0.7"/>
+          <rect x="65" y="65" width="70" height="70" fill="${zoneColors.Shadow}" opacity="0.8"/>
+          <rect x="85" y="85" width="30" height="30" fill="${zoneColors.Heart}"/>
+          <text x="100" y="103" text-anchor="middle" fill="white" font-size="9" font-weight="bold">Heart</text>
+        </svg>
+        <div style="overflow-x:auto;flex:1;min-width:280px;"><table class="stat-table">
+          <tr><th>Zone</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Swing%</th><th>Whiff%</th></tr>
+          ${zoneOrder.filter(z => byZone[z]).map(z => {
+            const s = byZone[z]; const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
+            const swingPct = (s.swings/s.n*100).toFixed(1);
+            const whiffPct = s.swings ? (s.whiffs/s.swings*100).toFixed(1) : '0.0';
+            return `<tr><td>${z}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus}</td><td>${swingPct}%</td><td>${whiffPct}%</td></tr>`;
+          }).join('')}
+        </table></div>
+      </div>`;
+  }
+
+  // ---- Sequences: NO REFERENCE SCREENSHOT was provided for this tab, so
+  // this is explicitly a best-effort stand-in (same "approach by count"
+  // concept used earlier in this project for individual hitters), not a
+  // replica of anything actually seen. ----
+  function hittingSubSequences(rows){
+    const counts = {};
+    rows.forEach(r => {
+      if (r.balls == null || r.strikes == null) return;
+      const key = `${r.balls}-${r.strikes}`;
+      counts[key] = counts[key] || { total: 0, swings: 0, whiffs: 0 };
+      counts[key].total++;
+      if (SWING_CODES.has(r.pitch_call||'')) counts[key].swings++;
+      if (r.pitch_call === 'SS') counts[key].whiffs++;
+    });
+    const order = ['0-0','1-0','0-1','2-0','1-1','0-2','3-0','2-1','1-2','3-1','2-2','3-2'];
+    const present = order.filter(k => counts[k]);
+    return `
+      <div class="empty-msg" style="padding:10px 10px 20px;text-align:left;font-style:normal;">No reference screenshot was available for this tab, so this is a best-effort stand-in (approach-by-count), not a replica of a specific design.</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Count</th><th>Pitches</th><th>Swing%</th><th>Whiff% (of swings)</th></tr>
+        ${present.map(k => {
+          const c = counts[k];
+          const swingPct = (c.swings/c.total*100).toFixed(1);
+          const whiffPct = c.swings ? (c.whiffs/c.swings*100).toFixed(1) : '0.0';
+          return `<tr><td>${k}</td><td>${c.total}</td><td>${swingPct}%</td><td>${whiffPct}%</td></tr>`;
+        }).join('')}
+      </table></div>`;
+  }
+
+  function hittingSubTraditionalStats(rows){
+    const cols = [
+      { label: 'Pitches', get: s => s.pitches },
+      { label: 'PA', get: s => s.pa },
+      { label: 'AB', get: s => s.ab },
+      { label: 'H', get: s => s.hits },
+      { label: '1B', get: s => s.singles },
+      { label: '2B', get: s => s.doubles },
+      { label: '3B', get: s => s.triples },
+      { label: 'HR', get: s => s.hr },
+      { label: 'TB', get: s => s.tb },
+      { label: 'SO', get: s => s.strikeouts },
+      { label: 'HBP', get: s => s.hbp },
+      { label: 'BB', get: s => s.walks },
+      { label: 'AVG', get: s => s.avg == null ? '-' : s.avg.toFixed(3) },
+      { label: 'OBP', get: s => s.obp == null ? '-' : s.obp.toFixed(3) },
+      { label: 'SLG', get: s => s.slg == null ? '-' : s.slg.toFixed(3) },
+      { label: 'OPS', get: s => s.ops == null ? '-' : s.ops.toFixed(3) },
+    ];
+    const overall = { ...computeHittingStats(rows), pitches: rows.length };
+    const vsR = { ...computeHittingStats(rows.filter(r => r.pitcher_throws === 'R')), pitches: rows.filter(r => r.pitcher_throws === 'R').length };
+    const vsL = { ...computeHittingStats(rows.filter(r => r.pitcher_throws === 'L')), pitches: rows.filter(r => r.pitcher_throws === 'L').length };
+
+    return `
+      <div class="section-label" style="margin-top:0;">Overall</div>
+      <div style="overflow-x:auto;">
+      <table class="stat-table">
+        <tr>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>
+        <tr>${cols.map(c => `<td>${c.get(overall)}</td>`).join('')}</tr>
+      </table>
+      </div>
+      <div class="section-label">By Pitcher Hand</div>
+      <div style="overflow-x:auto;">
+      <table class="stat-table">
+        <tr><th>Side</th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>
+        <tr><td><b>Left</b></td>${cols.map(c => `<td>${c.get(vsL)}</td>`).join('')}</tr>
+        <tr><td><b>Right</b></td>${cols.map(c => `<td>${c.get(vsR)}</td>`).join('')}</tr>
+      </table>
+      </div>`;
   }
 
   function hittingTeamSubRoster(rows){
@@ -1728,152 +2374,201 @@
   // `columns` parameter, but NOT YET VERIFIED against a live pull. Each of
   // those checks for real data at render time and shows a clear "pending"
   // message rather than a broken or empty-looking chart if it's not there yet.
+  //
+  // ---- Hitting Lab: BC-only, built on raw CSV exports (bc_hitting.json,
+  // combining 2025SpringData.csv + 2026SpringData.csv), NOT the Supabase/
+  // TruMedia pipeline the rest of this app uses. Confirmed those raw
+  // exports have ~95% Distance/ExitSpeed coverage for BC's own batted
+  // balls, vs. the ~6% we get through TruMedia for any team -- which is
+  // exactly why this is BC-only for now rather than D1-wide like
+  // everything else. If TruMedia's coverage ever improves, or if raw
+  // exports become available for other teams, this could be widened.
+  let hitlabRows = null;
+  let hitlabActiveView = 'space';
+  let hitlabActiveCamera = 'side';
+  let hitlabSelectedSeason = null;
+  let hitlabSelectedHitter = 'all';
+
+  const HITLAB_VIEWS = [
+    { id: 'space', label: 'Space' },
+    { id: 'heat', label: 'Heat' },
+    { id: 'spray', label: 'Spray' },
+    { id: 'trend', label: 'Trend' },
+    { id: 'battedball', label: 'Batted Ball' },
+  ];
+  const HITLAB_CAMERAS = [
+    { id: 'catcher', label: 'Catcher', eye: {x: 0, y: -2.8, z: 0.6} },
+    { id: 'pitcher', label: 'Pitcher', eye: {x: 0, y: 2.8, z: 0.6} },
+    { id: 'side', label: 'Side', eye: {x: 2.6, y: 0.3, z: 0.7} },
+    { id: 'overhead', label: 'Overhead', eye: {x: 0.01, y: 0.01, z: 3.2} },
+  ];
+
+  function hitlabEvColor(ev){
+    if (ev == null) return '#888';
+    const t = Math.max(0, Math.min(1, (ev - 65) / (108 - 65)));
+    const stops = [[0,[34,85,204]],[0.3,[47,176,200]],[0.55,[87,194,90]],[0.78,[232,210,61]],[1,[217,69,63]]];
+    for (let i=0;i<stops.length-1;i++){
+      const [t0,c0]=stops[i], [t1,c1]=stops[i+1];
+      if (t <= t1) {
+        const f = (t-t0)/(t1-t0||1);
+        const c = c0.map((v,j)=>Math.round(v+(c1[j]-v)*f));
+        return `rgb(${c[0]},${c[1]},${c[2]})`;
+      }
+    }
+    return 'rgb(217,69,63)';
+  }
+
+  // Real physics-based trajectory using each row's actual ExitSpeed/
+  // Distance/Bearing/HangTime -- confirmed against a real recorded home
+  // run (373 ft / 4.65s) to land at exactly the right distance with a
+  // realistic ~88 ft apex, not an approximation shared across all rows.
+  function hitlabTrajectory(row, nSamples=28){
+    const T = row.HangTime;
+    const dist = row.Distance;
+    const bearingRad = (row.Bearing || 0) * Math.PI / 180;
+    if (T == null || dist == null || T <= 0) return null;
+    const g = 32.2;
+    const h0 = 2.5;
+    const v0 = (0.5*g*T*T - h0) / T;
+    const pts = [];
+    for (let i=0;i<=nSamples;i++){
+      const t = (i/nSamples) * T;
+      const frac = t / T;
+      const x = dist * frac * Math.sin(bearingRad);
+      const y = dist * frac * Math.cos(bearingRad);
+      let z = h0 + v0*t - 0.5*g*t*t;
+      if (z < 0) z = 0;
+      pts.push({x, y, z});
+    }
+    return pts;
+  }
+
   async function renderHittingLabTab(){
     const content = document.getElementById('tabContent');
-    if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
-    content.innerHTML = `<div class="section-label" style="margin-top:0;">Hitting Lab</div><div id="labHitterList"><div class="status">Loading...</div></div>`;
-
-    try {
-      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&pitch_call=eq.IP${dateFilterQS()}&limit=8000`;
-      const resp = await fetch(url, { headers: headers() });
-      if (!resp.ok) { document.getElementById('labHitterList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
-      const rows = await resp.json();
-      if (rows.length === 0) {
-        document.getElementById('labHitterList').innerHTML = `<div class="empty-msg">No balls in play ingested for ${currentTeamName} yet.</div>`;
-        return;
-      }
-      const byHitter = {};
-      rows.forEach(r => { byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, n: 0 }; byHitter[r.batter_id].n++; });
-      const sorted = Object.entries(byHitter).sort((a,b) => b[1].n - a[1].n);
-
-      document.getElementById('labHitterList').innerHTML = `
-        <table class="stat-table">
-          <tr><th>Hitter</th><th>Balls In Play</th></tr>
-          ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}"><td>${s.name}</td><td>${s.n}</td></tr>`).join('')}
-        </table>`;
-      document.querySelectorAll('#labHitterList tr[data-id]').forEach(row => {
-        row.addEventListener('click', () => renderHitterLabDetail(row.dataset.id, row.dataset.name));
-      });
-    } catch (e) {
-      document.getElementById('labHitterList').innerHTML = `<div class="empty-msg">${e.message}</div>`;
+    if (currentTeamName !== 'Boston College') {
+      content.innerHTML = `<div class="empty-msg">Hitting Lab is BC-only for now -- it's built on Boston College's own raw TrackMan exports, which have far more complete batted-ball data (~95%) than what's available through the TruMedia pipeline for other teams (~6%). Switch to Boston College in the sidebar to use it.</div>`;
+      return;
     }
-  }
-
-  async function renderHitterLabDetail(batterId, batterName){
-    const content = document.getElementById('tabContent');
-    content.innerHTML = '';
-    const detailDiv = document.createElement('div');
-    detailDiv.className = 'pitcher-detail';
-    detailDiv.innerHTML = `<div class="status">Loading ${batterName}...</div>`;
-    content.appendChild(detailDiv);
-
+    content.innerHTML = `<div class="hitlab-scope"><div class="hitlab-status">Loading BC hitting data...</div></div>`;
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,exit_speed,angle,contact_position_x,contact_position_y,contact_position_z,direction&batter_id=eq.${encodeURIComponent(batterId)}&pitch_call=eq.IP${dateFilterQS()}&limit=2000`;
-      const resp = await fetch(url, { headers: headers() });
-      const rows = await resp.json();
-      if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No balls in play for this hitter.</div>`; return; }
+      if (hitlabRows === null) {
+        const resp = await fetch('bc_hitting.json');
+        if (!resp.ok) throw new Error(`Could not load bc_hitting.json (HTTP ${resp.status}) -- make sure it's committed alongside d1.html in the repo.`);
+        hitlabRows = await resp.json();
+      }
+      const seasons = [...new Set(hitlabRows.map(r => (r.Date||'').slice(0,4)).filter(Boolean))].sort().reverse();
+      if (hitlabSelectedSeason === null) hitlabSelectedSeason = seasons[0];
+      const hitters = [...new Set(hitlabRows.map(r => r.Batter).filter(Boolean))].sort();
 
-      const subtabs = [
-        { id: 'trend', label: 'Trend', render: labSubTrend },
-        { id: 'battedball', label: 'Batted Ball', render: labSubBattedBall },
-        { id: 'spray', label: 'Spray', render: labSubSpray },
-        { id: 'space', label: 'Space', render: labSub3DSpaceShell, postRender: labSub3DSpaceRender },
-        { id: 'heat', label: 'Heat', render: labSubContactHeat },
-      ];
-      let activeSub = 'trend';
-      function renderShell(){
-        detailDiv.innerHTML = `
-          <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
-          <div class="section-label" style="margin-top:0;">${batterName} — ${rows.length} balls in play</div>
-          <div class="subtabs-nav">
-            ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+      content.innerHTML = `
+        <div class="hitlab-scope">
+          <div class="hitlab-toprow">
+            <div class="hitlab-view-tabs" id="hitlabViewTabs">
+              ${HITLAB_VIEWS.map(v => `<button class="${v.id===hitlabActiveView?'active':''}" data-view="${v.id}">${v.label}</button>`).join('')}
+            </div>
+            <div class="hitlab-filters">
+              <label for="hitlabSeason">Season</label>
+              <select id="hitlabSeason">${seasons.map(s => `<option value="${s}" ${s===hitlabSelectedSeason?'selected':''}>${s}</option>`).join('')}</select>
+              <label for="hitlabHitter">Hitter</label>
+              <select id="hitlabHitter"><option value="all">All BC Hitters</option>${hitters.map(h => `<option value="${h}" ${h===hitlabSelectedHitter?'selected':''}>${h}</option>`).join('')}</select>
+            </div>
           </div>
-          <div id="subtabContent"></div>`;
-        detailDiv.querySelectorAll('.subtab-btn').forEach(btn => {
-          btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
+          <div class="hitlab-cam-tabs" id="hitlabCamTabs">
+            ${HITLAB_CAMERAS.map(c => `<button class="${c.id===hitlabActiveCamera?'active':''}" data-cam="${c.id}">${c.label}</button>`).join('')}
+          </div>
+          <div class="hitlab-status" id="hitlabStatus"></div>
+          <div class="hitlab-panel"><div id="hitlabPlotArea" style="height:520px;"></div></div>
+          <div class="hitlab-legend" id="hitlabLegend"></div>
+        </div>`;
+
+      document.getElementById('hitlabSeason').addEventListener('change', (e) => { hitlabSelectedSeason = e.target.value; hitlabRenderActiveView(); });
+      document.getElementById('hitlabHitter').addEventListener('change', (e) => { hitlabSelectedHitter = e.target.value; hitlabRenderActiveView(); });
+      document.querySelectorAll('#hitlabViewTabs button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          hitlabActiveView = btn.dataset.view;
+          document.querySelectorAll('#hitlabViewTabs button').forEach(b => b.classList.toggle('active', b===btn));
+          document.getElementById('hitlabCamTabs').style.display = hitlabActiveView === 'space' ? 'flex' : 'none';
+          hitlabRenderActiveView();
         });
-        const activeDef = subtabs.find(t => t.id === activeSub);
-        document.getElementById('subtabContent').innerHTML = activeDef.render(rows);
-        if (activeDef.postRender) activeDef.postRender(rows);
-      }
-      renderShell();
+      });
+      document.querySelectorAll('#hitlabCamTabs button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          hitlabActiveCamera = btn.dataset.cam;
+          document.querySelectorAll('#hitlabCamTabs button').forEach(b => b.classList.toggle('active', b===btn));
+          const cam = HITLAB_CAMERAS.find(c => c.id === hitlabActiveCamera);
+          Plotly.relayout('hitlabPlotArea', { 'scene.camera.eye': cam.eye });
+        });
+      });
+      hitlabRenderActiveView();
     } catch (e) {
-      detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
+      content.innerHTML = `<div class="hitlab-scope"><div class="hitlab-empty">${e.message}</div></div>`;
     }
   }
 
-  function labSubTrend(rows){
-    const byDate = {};
+  function hitlabFilteredRows(){
+    return hitlabRows.filter(r =>
+      (r.Date||'').slice(0,4) === hitlabSelectedSeason &&
+      (hitlabSelectedHitter === 'all' || r.Batter === hitlabSelectedHitter)
+    );
+  }
+
+  function hitlabRenderActiveView(){
+    if (hitlabActiveView === 'space') return hitlabRenderSpaceView();
+    Plotly.purge('hitlabPlotArea');
+    document.getElementById('hitlabLegend').innerHTML = '';
+    document.getElementById('hitlabStatus').textContent = '';
+    document.getElementById('hitlabPlotArea').innerHTML =
+      `<div class="hitlab-empty">"${HITLAB_VIEWS.find(v=>v.id===hitlabActiveView).label}" is coming in a follow-up pass -- not built yet.</div>`;
+  }
+
+  function hitlabRenderSpaceView(){
+    const rows = hitlabFilteredRows().filter(r => r.PitchCall === 'InPlay' && r.Distance != null && r.HangTime != null);
+    document.getElementById('hitlabStatus').textContent = `showing ${rows.length} of ${rows.length} batted balls`;
+    document.getElementById('hitlabLegend').innerHTML = `EV <div class="hitlab-grad"></div> 65-108 mph`;
+    if (rows.length === 0) {
+      Plotly.purge('hitlabPlotArea');
+      document.getElementById('hitlabPlotArea').innerHTML = `<div class="hitlab-empty">No batted balls with full trajectory data for this selection.</div>`;
+      return;
+    }
+    document.getElementById('hitlabPlotArea').innerHTML = '';
+    const traces = [];
     rows.forEach(r => {
-      if (r.date == null || r.exit_speed == null) return;
-      byDate[r.date] = byDate[r.date] || { sum: 0, n: 0 };
-      byDate[r.date].sum += r.exit_speed; byDate[r.date].n++;
+      const traj = hitlabTrajectory(r);
+      if (!traj) return;
+      const color = hitlabEvColor(r.ExitSpeed);
+      traces.push({
+        type: 'scatter3d', mode: 'lines', x: traj.map(p=>p.x), y: traj.map(p=>p.y), z: traj.map(p=>p.z),
+        line: { color, width: 3 }, hoverinfo: 'skip', showlegend: false,
+      });
+      const last = traj[traj.length-1];
+      traces.push({
+        type: 'scatter3d', mode: 'markers', x: [last.x], y: [last.y], z: [last.z],
+        marker: { color, size: 4 }, showlegend: false,
+        hovertemplate: `<b>${r.PlayResult||'?'}</b><br>` +
+          `Exit Velo: ${r.ExitSpeed?.toFixed(1) ?? '-'} mph<br>` +
+          `Launch: ${r.Angle?.toFixed(1) ?? '-'}&deg;<br>` +
+          `Distance: ${r.Distance?.toFixed(0) ?? '-'} ft<br>` +
+          `Pitch: ${r.RelSpeed?.toFixed(1) ?? '-'} mph<br>` +
+          `Movement: ${r.InducedVertBreak?.toFixed(1) ?? '-'}" IVB / ${r.HorzBreak?.toFixed(1) ?? '-'}" HB<br>` +
+          `Count: ${r.Balls ?? '-'}-${r.Strikes ?? '-'}<br>` +
+          `Date: ${r.Date || '-'}<extra></extra>`,
+      });
     });
-    const points = Object.entries(byDate).map(([date,d]) => ({x:date, y:d.sum/d.n})).sort((a,b)=>a.x.localeCompare(b.x));
-    if (points.length === 0) return `<div class="empty-msg">No dated exit-velo data.</div>`;
-    return `
-      <div class="section-label" style="margin-top:0;">Exit Velo Over Time</div>
-      ${lineChartSVG([{label:'Avg Exit Velo', color:'#8C2232', points}], {width:580, height:220})}`;
-  }
-
-  function labSubBattedBall(rows){
-    const withAngle = rows.filter(r => r.angle != null);
-    if (withAngle.length === 0) return `<div class="empty-msg">No launch angle data.</div>`;
-    const gb = withAngle.filter(r=>r.angle<10).length;
-    const ld = withAngle.filter(r=>r.angle>=10 && r.angle<25).length;
-    const fb = withAngle.filter(r=>r.angle>=25 && r.angle<50).length;
-    const pu = withAngle.filter(r=>r.angle>=50).length;
-    const maxCount = Math.max(gb, ld, fb, pu, 1);
-    const bar = (label, count) => `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-        <div style="width:90px;font-size:12px;">${label}</div>
-        <div style="background:var(--maroon);height:16px;width:${(count/maxCount*200).toFixed(0)}px;border-radius:3px;"></div>
-        <div style="font-size:12px;color:#666;">${count} (${(count/withAngle.length*100).toFixed(1)}%)</div>
-      </div>`;
-    return `
-      <div class="section-label" style="margin-top:0;">Batted Ball Type (from launch angle)</div>
-      ${bar('Ground Ball', gb)}${bar('Line Drive', ld)}${bar('Fly Ball', fb)}${bar('Popup', pu)}
-      <div class="status">Approximated from launch angle -- the API doesn't provide a tagged hit-type field directly.</div>`;
-  }
-
-  function labSubSpray(rows){
-    const withDir = rows.filter(r => r.direction != null);
-    if (withDir.length === 0) {
-      return `<div class="empty-msg">No exit-direction data yet. This needs the "direction" field (ExitDir), requested from the API starting with the most recent ingestion pipeline update -- if this still shows empty after a fresh pull, that field may not be coming back as expected and is worth checking directly against the pipeline's log output.</div>`;
-    }
-    return `
-      <div class="section-label" style="margin-top:0;">Spray Direction (n=${withDir.length})</div>
-      ${axisScatterSVG(withDir.map(r=>({...r, idx:1})), {
-        xField:'direction', yField:'idx', xMin:-50, xMax:50, yMin:0, yMax:2,
-        xLabel:'Exit Direction (°, negative=pull side)', yLabel:'', width:400, height:140,
-        colorFn: () => '#8C2232'
-      })}`;
-  }
-
-  function labSub3DSpaceShell(rows){
-    const withContact = rows.filter(r => r.contact_position_x != null && r.contact_position_y != null && r.contact_position_z != null);
-    if (withContact.length === 0) {
-      return `<div class="empty-msg">No contact-position data yet. This needs contact_position_x/y/z, requested from the API starting with the most recent ingestion pipeline update -- if this still shows empty after a fresh pull, worth checking the pipeline's log output to confirm those fields actually came back.</div>`;
-    }
-    return `<div class="section-label" style="margin-top:0;">3D Contact Position (n=${withContact.length})</div><div id="space3dPlot" style="width:100%;height:450px;"></div>`;
-  }
-  function labSub3DSpaceRender(rows){
-    const withContact = rows.filter(r => r.contact_position_x != null && r.contact_position_y != null && r.contact_position_z != null);
-    if (withContact.length === 0 || typeof Plotly === 'undefined') return;
-    Plotly.newPlot('space3dPlot', [{
-      type: 'scatter3d', mode: 'markers',
-      x: withContact.map(r=>r.contact_position_x), y: withContact.map(r=>r.contact_position_y), z: withContact.map(r=>r.contact_position_z),
-      marker: { size: 3, color: '#8C2232', opacity: 0.6 },
-    }], { scene: { xaxis:{title:'X (ft)'}, yaxis:{title:'Y (ft)'}, zaxis:{title:'Z (ft)'} }, margin:{l:0,r:0,t:10,b:0} }, { responsive:true });
-  }
-
-  function labSubContactHeat(rows){
-    const withContact = rows.filter(r => r.contact_position_x != null && r.contact_position_z != null);
-    if (withContact.length === 0) {
-      return `<div class="empty-msg">No contact-position data yet -- same dependency as the Space tab above.</div>`;
-    }
-    return `<div class="section-label" style="margin-top:0;">Contact Point Heat Map (n=${withContact.length})</div>
-      ${axisScatterSVG(withContact, { xField:'contact_position_x', yField:'contact_position_z', xMin:-3, xMax:3, yMin:0, yMax:5, xLabel:'Contact X (ft)', yLabel:'Contact Height (ft)', colorFn: () => '#8C2232', width:320, height:320 })}`;
+    traces.push({
+      type: 'scatter3d', mode: 'markers', x: [0], y: [0], z: [0],
+      marker: { color: 'white', size: 5, symbol: 'diamond' }, hoverinfo: 'skip', showlegend: false,
+    });
+    const cam = HITLAB_CAMERAS.find(c => c.id === hitlabActiveCamera);
+    Plotly.newPlot('hitlabPlotArea', traces, {
+      paper_bgcolor: '#12161f', plot_bgcolor: '#12161f', font: { color: '#e8eaf0' }, margin: {l:0,r:0,t:10,b:0},
+      scene: {
+        xaxis: { title: '', showbackground: false, gridcolor: '#262d3d', zerolinecolor: '#3a4256' },
+        yaxis: { title: '', showbackground: false, gridcolor: '#262d3d', zerolinecolor: '#3a4256' },
+        zaxis: { title: '', showbackground: false, gridcolor: '#262d3d', zerolinecolor: '#3a4256', range: [0, 120] },
+        camera: { eye: cam.eye },
+        aspectmode: 'data',
+      },
+    }, { displayModeBar: false, responsive: true });
   }
 </script>
 </body>
