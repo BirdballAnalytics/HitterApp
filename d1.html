@@ -240,6 +240,170 @@
     </svg>`;
   }
 
+  // Value-weighted heat map: colors each bin by the AVERAGE of some
+  // metric (e.g. slugging value, hard-hit rate) rather than raw pitch
+  // density like zoneHeatmapSVG. Bins with too few samples are left
+  // blank rather than shown with a potentially misleading color from
+  // a single lucky/unlucky data point.
+  function weightedHeatmapSVG(rows, valueFn, opts={}){
+    const w = opts.width || 220, h = opts.height || 240;
+    const grid = 10; // coarser than the density heatmap -- fewer samples per bin here, finer bins would be mostly empty
+    const cellW = w/grid, cellH = h/grid;
+    const minSamples = opts.minSamples || 3;
+    const pts = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null);
+    const sums = new Array(grid*grid).fill(0);
+    const counts = new Array(grid*grid).fill(0);
+    pts.forEach(r => {
+      const val = valueFn(r);
+      if (val == null) return;
+      const bx = Math.min(grid-1, Math.max(0, Math.floor((r.plate_loc_side+ZONE_RANGE)/(2*ZONE_RANGE)*grid)));
+      const by = Math.min(grid-1, Math.max(0, Math.floor((h - (r.plate_loc_height+ZONE_RANGE)/(2*ZONE_RANGE)*h) / cellH)));
+      sums[by*grid+bx] += val;
+      counts[by*grid+bx]++;
+    });
+    const avgs = sums.map((s,i) => counts[i] >= minSamples ? s/counts[i] : null);
+    const validAvgs = avgs.filter(v => v != null);
+    const sx = v => (v+ZONE_RANGE)/(2*ZONE_RANGE)*w;
+    const sy = v => h - (v+ZONE_RANGE)/(2*ZONE_RANGE)*h;
+    if (validAvgs.length === 0) {
+      return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#10141a;border-radius:6px;display:block;">
+        <text x="${w/2}" y="${h/2}" text-anchor="middle" fill="#888" font-size="11">Not enough data yet</text>
+      </svg>`;
+    }
+    const minV = Math.min(...validAvgs), maxV = Math.max(...validAvgs);
+    const stops = [[0,'#1a1a2e'],[0.35,'#3d2b56'],[0.6,'#8C2232'],[0.8,'#e07a1f'],[1,'#ffd23f']];
+    function lerpHex(a,b,t){
+      const pa=[1,3,5].map(i=>parseInt(a.slice(i,i+2),16));
+      const pb=[1,3,5].map(i=>parseInt(b.slice(i,i+2),16));
+      const p=pa.map((v,i)=>Math.round(v+(pb[i]-v)*t));
+      return `rgb(${p[0]},${p[1]},${p[2]})`;
+    }
+    function heatColor(t){
+      for (let i=0;i<stops.length-1;i++){
+        if (t <= stops[i+1][0]) {
+          const [t0,c0]=stops[i], [t1,c1]=stops[i+1];
+          return lerpHex(c0,c1,(t-t0)/(t1-t0 || 1));
+        }
+      }
+      return stops[stops.length-1][1];
+    }
+    let cells = '';
+    for (let by=0; by<grid; by++){
+      for (let bx=0; bx<grid; bx++){
+        const v = avgs[by*grid+bx];
+        if (v == null) continue;
+        const t = maxV > minV ? (v-minV)/(maxV-minV) : 0.5;
+        cells += `<rect x="${(bx*cellW).toFixed(1)}" y="${(by*cellH).toFixed(1)}" width="${cellW.toFixed(1)}" height="${cellH.toFixed(1)}" fill="${heatColor(t)}"/>`;
+      }
+    }
+    const zoneRect = `<rect x="${sx(-1).toFixed(1)}" y="${sy(1).toFixed(1)}" width="${(sx(1)-sx(-1)).toFixed(1)}" height="${(sy(-1)-sy(1)).toFixed(1)}" fill="none" stroke="white" stroke-width="1.5" stroke-opacity="0.7"/>`;
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#10141a;border-radius:6px;display:block;">
+      ${cells}
+      ${zoneRect}
+    </svg>
+    <div style="font-size:10px;color:#888;text-align:center;margin-top:2px;">Range: ${minV.toFixed(2)} - ${maxV.toFixed(2)} (bins with fewer than ${minSamples} samples left blank)</div>`;
+  }
+
+  // ---- PA-level deduplication: kor_bb/play_result repeat across every
+  // pitch of a plate appearance (confirmed behavior of this data source),
+  // so counting them per-pitch would wildly overcount hits/strikeouts/
+  // walks. This collapses to one row per PA before counting anything
+  // outcome-based. ----
+  function paKey(r){ return `${r.trackman_game_id}|${r.inning}|${r.top_bottom}|${r.pa_of_inning}`; }
+  function dedupeByPA(rows){
+    const seen = new Map();
+    rows.forEach(r => { const k = paKey(r); if (!seen.has(k)) seen.set(k, r); });
+    return [...seen.values()];
+  }
+
+  const FIP_CONSTANT = 3.10; // a reasonable approximate constant, not recalculated per season/league the way real FIP constants are
+
+  // ---- Team-wide traditional pitching stats. Runs/ERA/Runs-Per-Game are
+  // NOT computed -- runs_scored isn't available from the API, and while
+  // battingTeamRuns/pitchingTeamRuns exist in TruMedia's raw response,
+  // they were never added to this pipeline's schema. Flagged via
+  // runsAvailable rather than guessed at. ----
+  function computeTraditionalPitchingStats(rows){
+    const games = new Set(rows.map(r=>r.trackman_game_id)).size;
+    const pitches = rows.length;
+    const paRows = dedupeByPA(rows);
+
+    const hits = paRows.filter(r => ['Single','Double','Triple','HomeRun','HR'].includes(r.play_result)).length;
+    const hrCount = paRows.filter(r => ['HomeRun','HR'].includes(r.play_result)).length;
+    const walks = paRows.filter(r => r.kor_bb === 'BB').length;
+    const strikeouts = paRows.filter(r => r.kor_bb === 'K').length;
+    const hbp = rows.filter(r => r.pitch_call === 'HBP').length;
+
+    const inPlayRows = rows.filter(r => r.pitch_call === 'IP');
+    const battedBallOuts = inPlayRows.reduce((s,r) => s + (r.outs_on_play || 0), 0);
+    const totalOuts = strikeouts + battedBallOuts;
+    const ipWhole = Math.floor(totalOuts / 3);
+    const ipRemainder = totalOuts % 3;
+    const ipDisplay = `${ipWhole}.${ipRemainder}`;
+    const ipDecimal = ipWhole + ipRemainder/3;
+
+    const k9 = ipDecimal > 0 ? (strikeouts * 9 / ipDecimal) : null;
+    const bb9 = ipDecimal > 0 ? (walks * 9 / ipDecimal) : null;
+    const whip = ipDecimal > 0 ? ((walks + hits) / ipDecimal) : null;
+    const kbb = walks > 0 ? (strikeouts / walks) : (strikeouts > 0 ? Infinity : null);
+    const fip = ipDecimal > 0 ? (((13*hrCount) + 3*(walks+hbp) - 2*strikeouts) / ipDecimal + FIP_CONSTANT) : null;
+
+    // runs_scored requires migration 010 + a fresh pull with the updated
+    // pipeline -- older already-ingested games won't have it. Checked
+    // per-call rather than assumed, same defensive pattern as everywhere
+    // else in this app that depends on a field of uncertain availability.
+    const runsAvailable = rows.some(r => r.runs_scored != null);
+    const runs = runsAvailable ? rows.reduce((s,r) => s + (r.runs_scored || 0), 0) : null;
+    const era = (runsAvailable && totalOuts > 0) ? (27 * runs / totalOuts) : null;
+    const runsPerGame = (runsAvailable && games > 0) ? (runs / games) : null;
+
+    return { pitches, games, ipDisplay, ipDecimal, hits, walks, hbp, strikeouts, k9, bb9, whip, fip, kbb, hrCount, runs, era, runsPerGame, runsAvailable };
+  }
+
+  // ---- Team-wide hitting stats. AB/PA/OBP/BABIP use simplified
+  // denominators (no sacrifice flies broken out separately -- not
+  // available from this data source), and wOBA uses a standard-ish
+  // fixed weight set rather than a season-specific recalculated one.
+  // Both are common, clearly-labeled simplifications, not silent ones. ----
+  function computeHittingStats(rows){
+    const games = new Set(rows.map(r=>r.trackman_game_id)).size;
+    const paRows = dedupeByPA(rows);
+    const pa = paRows.length;
+
+    const walks = paRows.filter(r => r.kor_bb === 'BB').length;
+    const hbp = rows.filter(r => r.pitch_call === 'HBP').length;
+    const sac = paRows.filter(r => (r.play_result||'').toLowerCase().includes('sac')).length;
+    const ab = Math.max(0, pa - walks - hbp - sac);
+
+    const singles = paRows.filter(r => r.play_result === 'Single').length;
+    const doubles = paRows.filter(r => r.play_result === 'Double').length;
+    const triples = paRows.filter(r => r.play_result === 'Triple').length;
+    const hr = paRows.filter(r => ['HomeRun','HR'].includes(r.play_result)).length;
+    const hits = singles + doubles + triples + hr;
+    const strikeouts = paRows.filter(r => r.kor_bb === 'K').length;
+
+    const avg = ab > 0 ? hits/ab : null;
+    const obp = (ab+walks+hbp) > 0 ? (hits+walks+hbp)/(ab+walks+hbp) : null;
+    const totalBases = singles + 2*doubles + 3*triples + 4*hr;
+    const slg = ab > 0 ? totalBases/ab : null;
+    const ops = (obp!=null && slg!=null) ? obp+slg : null;
+    const iso = (slg!=null && avg!=null) ? slg-avg : null;
+    const babipDenom = ab - strikeouts - hr;
+    const babip = babipDenom > 0 ? (hits-hr)/babipDenom : null;
+    const wobaNum = 0.69*walks + 0.72*hbp + 0.89*singles + 1.27*doubles + 1.62*triples + 2.10*hr;
+    const wobaDen = ab+walks+hbp;
+    const woba = wobaDen > 0 ? wobaNum/wobaDen : null;
+    const kPct = pa > 0 ? strikeouts/pa : null;
+    const bbPct = pa > 0 ? walks/pa : null;
+    const kbb = walks > 0 ? strikeouts/walks : (strikeouts > 0 ? Infinity : null);
+
+    const runsAvailable = rows.some(r => r.runs_scored != null);
+    const runs = runsAvailable ? rows.reduce((s,r) => s + (r.runs_scored || 0), 0) : null;
+    const runsPerGame = (runsAvailable && games > 0) ? (runs / games) : null;
+
+    return { games, pa, ab, hits, doubles, triples, hr, avg, obp, slg, ops, iso, woba, babip, kPct, bbPct, kbb, singles, walks, strikeouts, runs, runsPerGame, runsAvailable };
+  }
+
   // Generic scatter with explicit axes -- unlike zoneScatterSVG (which is
   // locked to the normalized plate-location coordinate system), this
   // takes arbitrary x/y fields and ranges, so it works for release
@@ -443,82 +607,277 @@
   async function renderPitchingTab(){
     const content = document.getElementById('tabContent');
     if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
-    content.innerHTML = `<div class="section-label" style="margin-top:0;">Pitching Staff</div><div id="pitcherList"><div class="status">Loading...</div></div>`;
+    content.innerHTML = `<div class="status">Loading...</div>`;
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=pitcher_id,pitcher,pitch_call&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
+      const fields = 'pitcher_id,pitcher,pitch_call,plate_loc_side,plate_loc_height,kor_bb,play_result,outs_on_play,batter_side,trackman_game_id,inning,top_bottom,pa_of_inning,exit_speed,angle,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored';
+      const url = `${apiBase()}/rest/v1/pitches?select=${fields}&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
       const resp = await fetch(url, { headers: headers() });
-      if (!resp.ok) { document.getElementById('pitcherList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
+      if (!resp.ok) { content.innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
       const rows = await resp.json();
       document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
-
       if (rows.length === 0) {
-        document.getElementById('pitcherList').innerHTML = `<div class="empty-msg">No pitches ingested for ${currentTeamName} yet -- the backfill may not have reached their games.</div>`;
+        content.innerHTML = `<div class="empty-msg">No pitches ingested for ${currentTeamName} yet -- the backfill may not have reached their games.</div>`;
         return;
       }
 
-      const byPitcher = {};
-      rows.forEach(r => {
-        byPitcher[r.pitcher_id] = byPitcher[r.pitcher_id] || { name: r.pitcher, pitches: 0, inPlay: 0 };
-        byPitcher[r.pitcher_id].pitches++;
-        if (r.pitch_call === 'IP') byPitcher[r.pitcher_id].inPlay++;
-      });
-      const sorted = Object.entries(byPitcher).sort((a,b) => b[1].pitches - a[1].pitches);
-
-      document.getElementById('pitcherList').innerHTML = `
-        <table class="stat-table">
-          <tr><th>Pitcher</th><th>Pitches</th><th>Balls In Play</th></tr>
-          ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}"><td>${s.name}</td><td>${s.pitches}</td><td>${s.inPlay}</td></tr>`).join('')}
-        </table>`;
-      document.querySelectorAll('#pitcherList tr[data-id]').forEach(row => {
-        row.addEventListener('click', () => renderPitcherDetail(row.dataset.id, row.dataset.name));
-      });
+      const subtabs = [
+        { id: 'overview', label: 'Overview', render: pitchingTeamSubOverview },
+        { id: 'roster', label: 'Roster', render: pitchingTeamSubRoster },
+      ];
+      let activeSub = 'overview';
+      function renderShell(){
+        content.innerHTML = `
+          <div class="subtabs-nav">
+            ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+          </div>
+          <div id="teamSubContent"></div>`;
+        content.querySelectorAll('.subtab-btn').forEach(btn => {
+          btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
+        });
+        document.getElementById('teamSubContent').innerHTML = subtabs.find(t => t.id === activeSub).render(rows);
+        if (activeSub === 'roster') {
+          document.querySelectorAll('#teamSubContent tr[data-id]').forEach(row => {
+            row.addEventListener('click', () => renderPitcherDetail(row.dataset.id, row.dataset.name));
+          });
+        }
+      }
+      renderShell();
     } catch (e) {
-      document.getElementById('pitcherList').innerHTML = `<div class="empty-msg">${e.message}</div>`;
+      content.innerHTML = `<div class="empty-msg">${e.message}</div>`;
     }
+  }
+
+  function pitchingTeamSubRoster(rows){
+    const byPitcher = {};
+    rows.forEach(r => {
+      byPitcher[r.pitcher_id] = byPitcher[r.pitcher_id] || { name: r.pitcher, pitches: 0, inPlay: 0 };
+      byPitcher[r.pitcher_id].pitches++;
+      if (r.pitch_call === 'IP') byPitcher[r.pitcher_id].inPlay++;
+    });
+    const sorted = Object.entries(byPitcher).sort((a,b) => b[1].pitches - a[1].pitches);
+    return `
+      <div class="section-label" style="margin-top:0;">Pitching Staff</div>
+      <table class="stat-table">
+        <tr><th>Pitcher</th><th>Pitches</th><th>Balls In Play</th></tr>
+        ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}"><td>${s.name}</td><td>${s.pitches}</td><td>${s.inPlay}</td></tr>`).join('')}
+      </table>`;
+  }
+
+  // Real chart once exit-direction data exists; shows an honest "not
+  // available" message otherwise rather than an empty/broken chart.
+  // Confirmed as of the last check: 0 of 221,663+ in-play pitches have
+  // this field populated, even after requesting it explicitly from the
+  // API -- see the ingestion pipeline notes for the underlying cause.
+  function sprayChartOrPlaceholder(hitRows, opts={}){
+    // Checks both angle sources (bearing is a newer candidate found via
+    // the glossary, direction was the original one -- both were
+    // unverified as of when this was written, so whichever one actually
+    // comes back populated is used automatically) and uses real
+    // distance when available instead of a fixed nominal radius.
+    //
+    // CONFIRMED against real data: this is genuinely sparse, not
+    // universally missing -- roughly 6% of in-play pitches have real
+    // location data, the rest don't (even for confirmed real home runs
+    // checked directly). Likely reflects some venues/tracking setups
+    // capturing full ball-flight data and others not, rather than a
+    // blanket API limitation. Showing a coverage note whenever coverage
+    // is partial, so a sparse-looking chart doesn't get mistaken for a
+    // player who barely hit anything -- most usable at team level,
+    // where sparse-per-player coverage still adds up to enough dots to
+    // be worth looking at.
+    const withAngle = hitRows.filter(r => r.bearing != null || r.direction != null);
+    if (withAngle.length === 0) {
+      return `<div class="empty-msg" style="padding:30px 10px;font-size:12px;">Spray chart not available for these hits -- location data is sparse (~6% of in-play pitches have it) and happens to be missing for all of these specifically.</div>`;
+    }
+    const w = opts.width || 240, h = opts.height || 240;
+    const cx = w/2, cy = h*0.85;
+    const hasRealDistance = withAngle.some(r => r.distance != null);
+    const maxDist = hasRealDistance ? Math.max(...withAngle.filter(r=>r.distance!=null).map(r=>r.distance)) : null;
+    const nominalR = h*0.75;
+    const pts = withAngle.map(r => {
+      const angle = r.bearing != null ? r.bearing : r.direction;
+      const rad = (angle * Math.PI) / 180;
+      const R = (hasRealDistance && r.distance != null) ? (r.distance / maxDist) * nominalR : nominalR * 0.7;
+      return { x: cx + R*Math.sin(rad), y: cy - R*Math.cos(rad) };
+    });
+    const dots = pts.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="#8C2232" fill-opacity="0.7" stroke="white" stroke-width="0.5"/>`).join('');
+    const coveragePct = ((withAngle.length / hitRows.length) * 100).toFixed(0);
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="background:#e8f0e0;border-radius:6px;display:block;">${dots}</svg>
+      <div style="font-size:10px;color:#888;text-align:center;">Showing ${withAngle.length} of ${hitRows.length} hits (${coveragePct}% have location data) -- the rest are real hits just missing this specific field.</div>
+      ${!hasRealDistance ? '<div style="font-size:10px;color:#888;text-align:center;">Angle only -- no real distance data yet, so radius is not to scale.</div>' : ''}`;
+  }
+
+  function pitchingTeamSubOverview(rows){
+    const freqHeat = zoneHeatmapSVG(rows, {width:220,height:230});
+    const kRows = rows.filter(r => r.kor_bb === 'K' && (r.pitch_call === 'SS' || r.pitch_call === 'SL'));
+    const kHeat = kRows.length ? zoneHeatmapSVG(kRows, {width:220,height:230}) : '<div class="empty-msg" style="padding:40px 10px;font-size:12px;">No strikeout pitches identified yet.</div>';
+    const hitsAllowed = rows.filter(r => r.pitch_call === 'IP' && ['Single','Double','Triple','HomeRun','HR'].includes(r.play_result));
+    const spray = sprayChartOrPlaceholder(hitsAllowed, {width:220,height:230});
+
+    const overall = computeTraditionalPitchingStats(rows);
+    const vsR = computeTraditionalPitchingStats(rows.filter(r => r.batter_side === 'R'));
+    const vsL = computeTraditionalPitchingStats(rows.filter(r => r.batter_side === 'L'));
+    const f2 = v => v==null ? '-' : (v===Infinity ? '∞' : v.toFixed(2));
+
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Pitch Frequency</div>${freqHeat}</div>
+        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Strikeouts</div>${kHeat}</div>
+        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Spray Chart (Hits Allowed)</div>${spray}</div>
+      </div>
+      <div class="section-label">Team Pitching Stats</div>
+      <table class="stat-table">
+        <tr><th>Stat</th><th>Overall</th><th>vs RHH</th><th>vs LHH</th></tr>
+        <tr><td>Pitches</td><td>${overall.pitches}</td><td>${vsR.pitches}</td><td>${vsL.pitches}</td></tr>
+        <tr><td>Games</td><td>${overall.games}</td><td>—</td><td>—</td></tr>
+        <tr><td>Innings Pitched</td><td>${overall.ipDisplay}</td><td>${vsR.ipDisplay}</td><td>${vsL.ipDisplay}</td></tr>
+        <tr><td>Hits</td><td>${overall.hits}</td><td>${vsR.hits}</td><td>${vsL.hits}</td></tr>
+        ${overall.runsAvailable ? `
+        <tr><td>Runs</td><td>${overall.runs}</td><td>${vsR.runs ?? '-'}</td><td>${vsL.runs ?? '-'}</td></tr>
+        <tr><td>Runs Per Game</td><td>${f2(overall.runsPerGame)}</td><td>—</td><td>—</td></tr>
+        ` : `
+        <tr><td>Runs</td><td colspan="3">Not available for this data yet -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games won't have it retroactively</td></tr>
+        <tr><td>Runs Per Game</td><td colspan="3">Not available yet (same reason as Runs)</td></tr>
+        `}
+        <tr><td>BB</td><td>${overall.walks}</td><td>${vsR.walks}</td><td>${vsL.walks}</td></tr>
+        <tr><td>HBP</td><td>${overall.hbp}</td><td>${vsR.hbp}</td><td>${vsL.hbp}</td></tr>
+        <tr><td>K</td><td>${overall.strikeouts}</td><td>${vsR.strikeouts}</td><td>${vsL.strikeouts}</td></tr>
+        <tr><td>K/9</td><td>${f2(overall.k9)}</td><td>${f2(vsR.k9)}</td><td>${f2(vsL.k9)}</td></tr>
+        <tr><td>BB/9</td><td>${f2(overall.bb9)}</td><td>${f2(vsR.bb9)}</td><td>${f2(vsL.bb9)}</td></tr>
+        ${overall.runsAvailable ? `
+        <tr><td>ERA*</td><td>${f2(overall.era)}</td><td>${f2(vsR.era)}</td><td>${f2(vsL.era)}</td></tr>
+        ` : `
+        <tr><td>ERA</td><td colspan="3">Not available yet (same reason as Runs)</td></tr>
+        `}
+        <tr><td>FIP</td><td>${f2(overall.fip)}</td><td>${f2(vsR.fip)}</td><td>${f2(vsL.fip)}</td></tr>
+        <tr><td>WHIP</td><td>${f2(overall.whip)}</td><td>${f2(vsR.whip)}</td><td>${f2(vsL.whip)}</td></tr>
+        <tr><td>K:BB</td><td>${f2(overall.kbb)}</td><td>${f2(vsR.kbb)}</td><td>${f2(vsL.kbb)}</td></tr>
+      </table>
+      <div class="status">Innings Pitched/WHIP/FIP use outs_on_play to estimate outs recorded on balls in play, plus strikeouts -- a reasonable approximation given available data, not a guaranteed-exact box score number. FIP uses a fixed approximate constant (3.10), not a recalculated season-specific one.${overall.runsAvailable ? ' *ERA here uses TOTAL runs allowed, not earned runs specifically -- the API distinguishes earned from unearned runs via a separate field this pipeline does not pull yet, so this is closer to a runs-allowed average than a strict box-score ERA.' : ''} "Games" isn't meaningfully split by batter handedness, so only shown overall.</div>`;
   }
 
   async function renderHittingTab(){
     const content = document.getElementById('tabContent');
     if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
-    content.innerHTML = `<div class="section-label" style="margin-top:0;">Hitters</div><div id="hitterList"><div class="status">Loading...</div></div>`;
+    content.innerHTML = `<div class="status">Loading...</div>`;
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=batter_id,batter,pitch_call,sds&batter_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
+      const fields = 'batter_id,batter,pitch_call,plate_loc_side,plate_loc_height,exit_speed,angle,play_result,kor_bb,pitcher_throws,trackman_game_id,inning,top_bottom,pa_of_inning,sds,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored';
+      const url = `${apiBase()}/rest/v1/pitches?select=${fields}&batter_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
       const resp = await fetch(url, { headers: headers() });
-      if (!resp.ok) { document.getElementById('hitterList').innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
+      if (!resp.ok) { content.innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
       const rows = await resp.json();
       document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
-
       if (rows.length === 0) {
-        document.getElementById('hitterList').innerHTML = `<div class="empty-msg">No pitches ingested for ${currentTeamName} yet -- the backfill may not have reached their games.</div>`;
+        content.innerHTML = `<div class="empty-msg">No pitches ingested for ${currentTeamName} yet -- the backfill may not have reached their games.</div>`;
         return;
       }
 
-      const byHitter = {};
-      rows.forEach(r => {
-        byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, pitchesSeen: 0, inPlay: 0, sdsSum: 0, sdsN: 0 };
-        byHitter[r.batter_id].pitchesSeen++;
-        if (r.pitch_call === 'IP') byHitter[r.batter_id].inPlay++;
-        if (r.sds != null) { byHitter[r.batter_id].sdsSum += r.sds; byHitter[r.batter_id].sdsN++; }
-      });
-      const sorted = Object.entries(byHitter).sort((a,b) => b[1].pitchesSeen - a[1].pitchesSeen);
-
-      document.getElementById('hitterList').innerHTML = `
-        <table class="stat-table">
-          <tr><th>Hitter</th><th>Pitches Seen</th><th>Balls In Play</th><th>Mean SDS</th></tr>
-          ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}">
-            <td>${s.name}</td><td>${s.pitchesSeen}</td><td>${s.inPlay}</td>
-            <td>${s.sdsN ? (s.sdsSum/s.sdsN).toFixed(1) : '-'}</td>
-          </tr>`).join('')}
-        </table>
-        <div class="status">Full SDS breakdown (by pitch type, by location) is available on each hitter's detail page.</div>`;
-      document.querySelectorAll('#hitterList tr[data-id]').forEach(row => {
-        row.addEventListener('click', () => renderHitterDetail(row.dataset.id, row.dataset.name));
-      });
+      const subtabs = [
+        { id: 'overview', label: 'Overview', render: hittingTeamSubOverview },
+        { id: 'roster', label: 'Roster', render: hittingTeamSubRoster },
+      ];
+      let activeSub = 'overview';
+      function renderShell(){
+        content.innerHTML = `
+          <div class="subtabs-nav">
+            ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+          </div>
+          <div id="teamSubContent"></div>`;
+        content.querySelectorAll('.subtab-btn').forEach(btn => {
+          btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
+        });
+        document.getElementById('teamSubContent').innerHTML = subtabs.find(t => t.id === activeSub).render(rows);
+        if (activeSub === 'roster') {
+          document.querySelectorAll('#teamSubContent tr[data-id]').forEach(row => {
+            row.addEventListener('click', () => renderHitterDetail(row.dataset.id, row.dataset.name));
+          });
+        }
+      }
+      renderShell();
     } catch (e) {
-      document.getElementById('hitterList').innerHTML = `<div class="empty-msg">${e.message}</div>`;
+      content.innerHTML = `<div class="empty-msg">${e.message}</div>`;
     }
+  }
+
+  function hittingTeamSubRoster(rows){
+    const byHitter = {};
+    rows.forEach(r => {
+      byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, pitchesSeen: 0, inPlay: 0, sdsSum: 0, sdsN: 0 };
+      byHitter[r.batter_id].pitchesSeen++;
+      if (r.pitch_call === 'IP') byHitter[r.batter_id].inPlay++;
+      if (r.sds != null) { byHitter[r.batter_id].sdsSum += r.sds; byHitter[r.batter_id].sdsN++; }
+    });
+    const sorted = Object.entries(byHitter).sort((a,b) => b[1].pitchesSeen - a[1].pitchesSeen);
+    return `
+      <div class="section-label" style="margin-top:0;">Hitters</div>
+      <table class="stat-table">
+        <tr><th>Hitter</th><th>Pitches Seen</th><th>Balls In Play</th><th>Mean SDS</th></tr>
+        ${sorted.map(([id, s]) => `<tr class="clickable" data-id="${id}" data-name="${s.name}">
+          <td>${s.name}</td><td>${s.pitchesSeen}</td><td>${s.inPlay}</td>
+          <td>${s.sdsN ? (s.sdsSum/s.sdsN).toFixed(1) : '-'}</td>
+        </tr>`).join('')}
+      </table>
+      <div class="status">Full SDS breakdown (by pitch type, by location) is available on each hitter's detail page.</div>`;
+  }
+
+  function hittingTeamSubOverview(rows){
+    const slgHeat = weightedHeatmapSVG(rows, r => {
+      if (r.pitch_call !== 'IP') return null;
+      if (r.play_result === 'Single') return 1;
+      if (r.play_result === 'Double') return 2;
+      if (r.play_result === 'Triple') return 3;
+      if (r.play_result === 'HomeRun' || r.play_result === 'HR') return 4;
+      return 0;
+    }, {width:220,height:230});
+
+    const evRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null && r.exit_speed >= 95);
+    const evHeat = evRows.length ? zoneHeatmapSVG(evRows, {width:220,height:230}) : '<div class="empty-msg" style="padding:40px 10px;font-size:12px;">No hard-hit (95+) balls recorded yet.</div>';
+
+    const hitsBy = rows.filter(r => r.pitch_call === 'IP' && ['Single','Double','Triple','HomeRun','HR'].includes(r.play_result));
+    const spray = sprayChartOrPlaceholder(hitsBy, {width:220,height:230});
+
+    const overall = computeHittingStats(rows);
+    const vsRHP = computeHittingStats(rows.filter(r => r.pitcher_throws === 'R'));
+    const vsLHP = computeHittingStats(rows.filter(r => r.pitcher_throws === 'L'));
+    const f3 = v => v==null ? '-' : (v===Infinity ? '∞' : v.toFixed(3));
+    const f2 = v => v==null ? '-' : (v===Infinity ? '∞' : v.toFixed(2));
+    const pct = v => v==null ? '-' : (v*100).toFixed(1)+'%';
+
+    return `
+      <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Slugging</div>${slgHeat}</div>
+        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">95+ Exit Velo</div>${evHeat}</div>
+        <div style="flex:1;min-width:220px;"><div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:4px;">Spray Chart (Hits)</div>${spray}</div>
+      </div>
+      <div class="section-label">Team Hitting Stats</div>
+      <table class="stat-table">
+        <tr><th>Stat</th><th>Overall</th><th>vs RHP</th><th>vs LHP</th></tr>
+        <tr><td>Games</td><td>${overall.games}</td><td>—</td><td>—</td></tr>
+        <tr><td>PA</td><td>${overall.pa}</td><td>${vsRHP.pa}</td><td>${vsLHP.pa}</td></tr>
+        <tr><td>AB</td><td>${overall.ab}</td><td>${vsRHP.ab}</td><td>${vsLHP.ab}</td></tr>
+        <tr><td>Hits</td><td>${overall.hits}</td><td>${vsRHP.hits}</td><td>${vsLHP.hits}</td></tr>
+        <tr><td>2B</td><td>${overall.doubles}</td><td>${vsRHP.doubles}</td><td>${vsLHP.doubles}</td></tr>
+        <tr><td>3B</td><td>${overall.triples}</td><td>${vsRHP.triples}</td><td>${vsLHP.triples}</td></tr>
+        <tr><td>HR</td><td>${overall.hr}</td><td>${vsRHP.hr}</td><td>${vsLHP.hr}</td></tr>
+        <tr><td>AVG</td><td>${f3(overall.avg)}</td><td>${f3(vsRHP.avg)}</td><td>${f3(vsLHP.avg)}</td></tr>
+        <tr><td>OBP</td><td>${f3(overall.obp)}</td><td>${f3(vsRHP.obp)}</td><td>${f3(vsLHP.obp)}</td></tr>
+        <tr><td>SLG</td><td>${f3(overall.slg)}</td><td>${f3(vsRHP.slg)}</td><td>${f3(vsLHP.slg)}</td></tr>
+        <tr><td>OPS</td><td>${f3(overall.ops)}</td><td>${f3(vsRHP.ops)}</td><td>${f3(vsLHP.ops)}</td></tr>
+        <tr><td>ISO</td><td>${f3(overall.iso)}</td><td>${f3(vsRHP.iso)}</td><td>${f3(vsLHP.iso)}</td></tr>
+        <tr><td>wOBA</td><td>${f3(overall.woba)}</td><td>${f3(vsRHP.woba)}</td><td>${f3(vsLHP.woba)}</td></tr>
+        <tr><td>BABIP</td><td>${f3(overall.babip)}</td><td>${f3(vsRHP.babip)}</td><td>${f3(vsLHP.babip)}</td></tr>
+        <tr><td>K%</td><td>${pct(overall.kPct)}</td><td>${pct(vsRHP.kPct)}</td><td>${pct(vsLHP.kPct)}</td></tr>
+        <tr><td>BB%</td><td>${pct(overall.bbPct)}</td><td>${pct(vsRHP.bbPct)}</td><td>${pct(vsLHP.bbPct)}</td></tr>
+        <tr><td>K:BB</td><td>${f2(overall.kbb)}</td><td>${f2(vsRHP.kbb)}</td><td>${f2(vsLHP.kbb)}</td></tr>
+        ${overall.runsAvailable ? `
+        <tr><td>Runs Per Game</td><td>${overall.runsPerGame.toFixed(2)}</td><td>—</td><td>—</td></tr>
+        ` : `
+        <tr><td>Runs Per Game</td><td colspan="3">Not available for this data yet -- needs migration 010 + a fresh pull with the updated ingestion pipeline; already-ingested games won't have it retroactively</td></tr>
+        `}
+      </table>
+      <div class="status">AB/OBP/BABIP use simplified denominators (sacrifice flies aren't broken out separately in this data). wOBA uses a standard-ish fixed weight set, not a recalculated season-specific one. "Games" isn't meaningfully split by pitcher handedness, so only shown overall.</div>`;
   }
 
   async function renderPitcherDetail(pitcherId, pitcherName){
