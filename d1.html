@@ -24,10 +24,9 @@
   }
   .logo-chip {
     width: 42px; height: 42px; border-radius: 8px; background: white;
-    display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
-    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; color: var(--maroon); font-size: 15px; flex: 0 0 auto;
   }
-  .logo-chip img { width: 100%; height: 100%; object-fit: contain; }
   .header-bar h1 {
     font-size: 16px; letter-spacing: 0.08em; margin: 0; font-weight: 700;
   }
@@ -139,7 +138,7 @@
 </head>
 <body>
   <div class="header-bar">
-    <div class="logo-chip"><img src="bc_logo.png" alt="Boston College Eagles logo"></div>
+    <div class="logo-chip">BC</div>
     <h1 id="headerTitle">BOSTON COLLEGE BASEBALL</h1>
   </div>
 
@@ -673,6 +672,467 @@
     const runsPerGame = (runsAvailable && games > 0) ? (runs / games) : null;
 
     return { games, pa, ab, hits, doubles, triples, hr, avg, obp, slg, ops, iso, woba, babip, kPct, bbPct, kbb, singles, walks, strikeouts, runs, runsPerGame, runsAvailable, hbp, tb: totalBases };
+  }
+
+  // ---- Hitting tab shared infrastructure ----
+  // Categorizes an in-play pitch by its actual outcome for spray-chart
+  // coloring. Uses the REAL short play_result codes confirmed against
+  // production data (S/D/T/HR/IPHR/ROE), not spelled-out words -- an
+  // earlier version of this used spelled-out strings and silently
+  // undercounted everything except home runs. "OUT" is a catch-all
+  // bucket (regular outs, double/triple plays, fielder's choice, sac
+  // flies/bunts), matching the reference dashboard's own simplified
+  // bucketing.
+  function battedBallCategory(playResult){
+    if (playResult === 'S') return '1B';
+    if (playResult === 'D') return '2B';
+    if (playResult === 'T') return '3B';
+    if (playResult === 'HR' || playResult === 'IPHR') return 'HR';
+    if (playResult === 'ROE' || playResult === 'ReachedOnError' || playResult === 'Error') return 'ROE';
+    return 'OUT';
+  }
+  const BIP_COLORS = { OUT: '#8a8a8a', '1B': '#3a9d4f', '2B': '#2f7fd6', '3B': '#9b4fc9', HR: '#e6552e', ROE: '#e8c33d' };
+
+  function computeAdvancedStats(rows){
+    const stats = computeHittingStats(rows);
+    const bipRows = rows.filter(r => r.pitch_call === 'IP');
+    const bip = bipRows.length;
+    const paBip = dedupeByPA(bipRows);
+    const s1 = paBip.filter(r => r.play_result === 'S').length;
+    const d2 = paBip.filter(r => r.play_result === 'D').length;
+    const t3 = paBip.filter(r => r.play_result === 'T').length;
+    const hr = paBip.filter(r => ['HR','IPHR'].includes(r.play_result)).length;
+    const wobaConDen = paBip.length;
+    const wobaCon = wobaConDen > 0 ? (0.89*s1 + 1.27*d2 + 1.62*t3 + 2.10*hr) / wobaConDen : null;
+    const xbaRows = rows.filter(r => r.x_avg != null);
+    const xba = xbaRows.length ? xbaRows.reduce((s,r)=>s+r.x_avg,0)/xbaRows.length : null;
+    const xslgRows = rows.filter(r => r.x_slg != null);
+    const xslg = xslgRows.length ? xslgRows.reduce((s,r)=>s+r.x_slg,0)/xslgRows.length : null;
+    const xwobaRows = rows.filter(r => r.x_woba != null);
+    const xwoba = xwobaRows.length ? xwobaRows.reduce((s,r)=>s+r.x_woba,0)/xwobaRows.length : null;
+    return { bip, babip: stats.babip, xba, xslg, woba: stats.woba, wobaCon, xwoba, iso: stats.iso };
+  }
+
+  function computeExitVeloStats(rows){
+    const pitches = rows.length;
+    const bipRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null);
+    const bip = bipRows.length;
+    const avgEV = bip ? bipRows.reduce((s,r)=>s+r.exit_speed,0)/bip : null;
+    const maxEV = bip ? Math.max(...bipRows.map(r=>r.exit_speed)) : null;
+    const hit95Pct = bip ? bipRows.filter(r=>r.exit_speed>=95).length/bip : null;
+    const laRows = bipRows.filter(r=>r.angle!=null);
+    const la1030Pct = laRows.length ? laRows.filter(r=>r.angle>=10&&r.angle<=30).length/laRows.length : null;
+    const barrelRows = bipRows.filter(r=>r.angle!=null);
+    const barrelPct = barrelRows.length ? barrelRows.filter(r=>r.exit_speed>=95 && r.angle>=10 && r.angle<=35).length/barrelRows.length : null;
+    const distRows = bipRows.filter(r=>r.distance!=null);
+    const maxDist = distRows.length ? Math.max(...distRows.map(r=>r.distance)) : null;
+    const swings = rows.filter(r => SWING_CODES.has(r.pitch_call||''));
+    const contact = swings.filter(r => r.pitch_call==='F'||r.pitch_call==='IP');
+    const contactPct = swings.length ? contact.length/swings.length : null;
+    const zSwings = swings.filter(r => r.attack_zone==='Heart'||r.attack_zone==='Shadow');
+    const zContact = zSwings.filter(r=>r.pitch_call==='F'||r.pitch_call==='IP');
+    const zContactPct = zSwings.length ? zContact.length/zSwings.length : null;
+    const outsideRows = rows.filter(r => r.attack_zone==='Chase'||r.attack_zone==='Waste');
+    const chased = outsideRows.filter(r => SWING_CODES.has(r.pitch_call||''));
+    const chasePct = outsideRows.length ? chased.length/outsideRows.length : null;
+    return { pitches, bip, avgEV, maxEV, hit95Pct, la1030Pct, barrelPct, maxDist, contactPct, zContactPct, chasePct };
+  }
+
+  // ---- Exit Velo Charts: scatter colored by EV bucket, crossed by hand x pitch family (FB / OS+BB), pitcher-view home plate ----
+  function evScatterPanel(rows, title){
+    const pts = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null && r.plate_loc_side != null && r.plate_loc_height != null);
+    const chart = pts.length ? axisScatterSVG(pts.map(r => ({...r, _rx: approxPlateX(r.plate_loc_side), _rz: approxPlateZ(r.plate_loc_height)})), {
+      xField: '_rx', yField: '_rz', xMin: -2.5, xMax: 2.5, yMin: 0, yMax: 5,
+      xLabel: 'Horizontal Location', yLabel: 'Vertical Location',
+      colorFn: r => EV_BUCKET_COLORS[evBucket(r.exit_speed)] || '#999', width: 260, height: 260,
+    }) : '<div class="empty-msg" style="padding:30px;">No balls in play</div>';
+    return `<div class="chart-card"><div class="chart-card-header">${title}</div><div class="chart-card-body">${chart}${homePlateSVG(260)}
+      <div style="margin-top:4px;font-size:10px;color:#666;">
+        <span style="color:${EV_BUCKET_COLORS['0-74']};">&#9679;</span> 0-74
+        <span style="color:${EV_BUCKET_COLORS['75-95']};margin-left:8px;">&#9679;</span> 75-95
+        <span style="color:${EV_BUCKET_COLORS['95+']};margin-left:8px;">&#9679;</span> 95+
+      </div></div></div>`;
+  }
+  function evBucket(ev){
+    if (ev == null) return null;
+    if (ev >= 95) return '95+';
+    if (ev >= 75) return '75-95';
+    return '0-74';
+  }
+
+  // ---- IZ Whiff / Chase: white heat maps crossed by hand x pitch family, pitcher-view home plate ----
+  function heatPanel(rows, title){
+    const n = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null).length;
+    return `<div class="chart-card"><div class="chart-card-header">${title} (n=${n})</div><div class="chart-card-body">${whiteHeatmapSVG(rows, {width:220,height:230})}${homePlateSVG(220)}</div></div>`;
+  }
+  function izWhiffOrChasePanels(rows, filterFn, labelPrefix){
+    const base = rows.filter(filterFn);
+    const vsRHP = base.filter(r => r.pitcher_throws === 'R');
+    const vsLHP = base.filter(r => r.pitcher_throws === 'L');
+    const byFamily = (subset) => ({
+      all: subset,
+      fb: subset.filter(r => pitchFamily(r.tagged_pitch_type) === 'Fastball'),
+      os: subset.filter(r => pitchFamily(r.tagged_pitch_type) === 'Offspeed'),
+      bb: subset.filter(r => pitchFamily(r.tagged_pitch_type) === 'Breaking'),
+    });
+    const r = byFamily(vsRHP), l = byFamily(vsLHP);
+    return `
+      <div class="section-label" style="margin-top:0;">vs RHP</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${heatPanel(r.all, `${labelPrefix} vs RHP`)}
+        ${heatPanel(r.fb, `${labelPrefix} vs RHP FB`)}
+        ${heatPanel(r.os, `${labelPrefix} vs RHP OS`)}
+        ${heatPanel(r.bb, `${labelPrefix} vs RHP BB`)}
+      </div>
+      <div class="section-label">vs LHP</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${heatPanel(l.all, `${labelPrefix} vs LHP`)}
+        ${heatPanel(l.fb, `${labelPrefix} vs LHP FB`)}
+        ${heatPanel(l.os, `${labelPrefix} vs LHP OS`)}
+        ${heatPanel(l.bb, `${labelPrefix} vs LHP BB`)}
+      </div>`;
+  }
+  function hittingSubIZWhiff(rows){
+    return izWhiffOrChasePanels(rows, r => r.pitch_call === 'SS', 'Whiff');
+  }
+  function hittingSubChase(rows){
+    return izWhiffOrChasePanels(rows, r => (r.attack_zone==='Chase'||r.attack_zone==='Waste') && SWING_CODES.has(r.pitch_call||''), 'Chase');
+  }
+
+  // ---- Swing Decisions / Takes: scatter colored by individual pitch type, NOT crossed (hand OR family, not both), pitcher-view home plate ----
+  function pitchTypeScatterPanel(rows, title){
+    const pts = rows.filter(r => r.plate_loc_side!=null && r.plate_loc_height!=null);
+    const types = [...new Set(pts.map(r => r.tagged_pitch_type || 'Undefined'))];
+    const chart = pts.length ? zoneScatterSVG(pts.map(r => ({...r, plate_loc_side: approxPlateX(r.plate_loc_side), plate_loc_height: approxPlateZ(r.plate_loc_height)-2.5})), {
+      colorFn: r => pitchTypeScatterColor(r.tagged_pitch_type), width: 260, height: 260,
+    }) : '<div class="empty-msg" style="padding:30px;">No pitches</div>';
+    const legend = types.map(t => `<span style="display:inline-flex;align-items:center;gap:2px;margin-right:6px;font-size:9px;color:#666;"><span style="width:7px;height:7px;border-radius:50%;background:${pitchTypeScatterColor(t)};display:inline-block;"></span>${t}</span>`).join('');
+    return `<div class="chart-card"><div class="chart-card-header">${title}</div><div class="chart-card-body">${chart}${homePlateSVG(260)}<div style="margin-top:4px;">${legend}</div></div></div>`;
+  }
+  function swingOrTakePanels(rows, filterFn, labelPrefix){
+    const base = rows.filter(filterFn);
+    const vsRHP = base.filter(r => r.pitcher_throws === 'R');
+    const vsLHP = base.filter(r => r.pitcher_throws === 'L');
+    const vsFB = base.filter(r => pitchFamily(r.tagged_pitch_type) === 'Fastball');
+    const vsOS = base.filter(r => pitchFamily(r.tagged_pitch_type) === 'Offspeed');
+    const vsBB = base.filter(r => pitchFamily(r.tagged_pitch_type) === 'Breaking');
+    return `
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${pitchTypeScatterPanel(base, `${labelPrefix} — All`)}
+        ${pitchTypeScatterPanel(vsRHP, `${labelPrefix} vs RHP`)}
+        ${pitchTypeScatterPanel(vsLHP, `${labelPrefix} vs LHP`)}
+      </div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;">
+        ${pitchTypeScatterPanel(vsFB, `${labelPrefix} vs FB`)}
+        ${pitchTypeScatterPanel(vsOS, `${labelPrefix} vs OS`)}
+        ${pitchTypeScatterPanel(vsBB, `${labelPrefix} vs BB`)}
+      </div>`;
+  }
+  function hittingSubSwingDecisions(rows){
+    return swingOrTakePanels(rows, r => SWING_CODES.has(r.pitch_call||''), 'Swing Decisions');
+  }
+  function hittingSubTakes(rows){
+    return swingOrTakePanels(rows, r => r.pitch_call === 'B' || r.pitch_call === 'SL', 'Takes');
+  }
+
+  // ---- Traditional Stats ----
+  function hittingSubTraditionalStats(rows){
+    const cols = [
+      { label: 'Pitches', get: s => s.pitches },
+      { label: 'PA', get: s => s.pa },
+      { label: 'AB', get: s => s.ab },
+      { label: 'H', get: s => s.hits },
+      { label: '1B', get: s => s.singles },
+      { label: '2B', get: s => s.doubles },
+      { label: '3B', get: s => s.triples },
+      { label: 'HR', get: s => s.hr },
+      { label: 'TB', get: s => s.tb },
+      { label: 'SO', get: s => s.strikeouts },
+      { label: 'HBP', get: s => s.hbp },
+      { label: 'BB', get: s => s.walks },
+      { label: 'AVG', get: s => s.avg == null ? '-' : s.avg.toFixed(3) },
+      { label: 'OBP', get: s => s.obp == null ? '-' : s.obp.toFixed(3) },
+      { label: 'SLG', get: s => s.slg == null ? '-' : s.slg.toFixed(3) },
+      { label: 'OPS', get: s => s.ops == null ? '-' : s.ops.toFixed(3) },
+    ];
+    const overall = { ...computeHittingStats(rows), pitches: rows.length };
+    const vsR = { ...computeHittingStats(rows.filter(r => r.pitcher_throws === 'R')), pitches: rows.filter(r => r.pitcher_throws === 'R').length };
+    const vsL = { ...computeHittingStats(rows.filter(r => r.pitcher_throws === 'L')), pitches: rows.filter(r => r.pitcher_throws === 'L').length };
+    return `
+      <div class="section-label" style="margin-top:0;">Overall</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>
+        <tr>${cols.map(c => `<td>${c.get(overall)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitcher Hand</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Side</th>${cols.map(c => `<th>${c.label}</th>`).join('')}</tr>
+        <tr><td><b>Left</b></td>${cols.map(c => `<td>${c.get(vsL)}</td>`).join('')}</tr>
+        <tr><td><b>Right</b></td>${cols.map(c => `<td>${c.get(vsR)}</td>`).join('')}</tr>
+      </table></div>`;
+  }
+
+  // ---- Advanced Stats ----
+  function hittingSubAdvancedStats(rows){
+    const f3 = v => v == null ? '-' : v.toFixed(3);
+    const cols = [
+      { label: 'BIP', get: s => s.bip }, { label: 'BABIP', get: s => f3(s.babip) },
+      { label: 'xBA', get: s => f3(s.xba) }, { label: 'xSLG', get: s => f3(s.xslg) },
+      { label: 'wOBA', get: s => f3(s.woba) }, { label: 'wOBAcon', get: s => f3(s.wobaCon) },
+      { label: 'xwOBA', get: s => f3(s.xwoba) }, { label: 'ISO', get: s => f3(s.iso) },
+      { label: 'wRC+', get: () => 'N/A' }, { label: 'OPS+', get: () => 'N/A' },
+    ];
+    const overall = computeAdvancedStats(rows);
+    const vsL = computeAdvancedStats(rows.filter(r => r.pitcher_throws === 'L'));
+    const vsR = computeAdvancedStats(rows.filter(r => r.pitcher_throws === 'R'));
+    const byPitch = {};
+    rows.forEach(r => { const disp = pitchTypeDisplay(r.tagged_pitch_type); byPitch[disp] = byPitch[disp]||[]; byPitch[disp].push(r); });
+    const pitchOrder = ['Fastball','TwoSeam','Sinker','Cutter','ChangeUp','Splitter','Slider','Curveball','Sweeper','Other','Undefined','Knuckleball'];
+    return `
+      <div class="section-label" style="margin-top:0;">Overall</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        <tr>${cols.map(c=>`<td>${c.get(overall)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitcher Hand</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Side</th>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        <tr><td><b>Left</b></td>${cols.map(c=>`<td>${c.get(vsL)}</td>`).join('')}</tr>
+        <tr><td><b>Right</b></td>${cols.map(c=>`<td>${c.get(vsR)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitch Type</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Pitch</th>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        ${pitchOrder.filter(p => byPitch[p]).map(p => {
+          const s = computeAdvancedStats(byPitch[p]);
+          return `<tr><td>${p}</td>${cols.map(c=>`<td>${c.get(s)}</td>`).join('')}</tr>`;
+        }).join('')}
+      </table></div>
+      <div class="status">wRC+/OPS+ need a league-wide baseline this app hasn't computed yet -- shown as N/A. xBA/xSLG/xwOBA come from a recent, unverified addition to the ingestion pipeline.</div>`;
+  }
+
+  // ---- Exit Velo Stats ----
+  function hittingSubExitVeloStats(rows){
+    const f1 = v => v == null ? '-' : v.toFixed(1);
+    const pct = v => v == null ? '-' : (v*100).toFixed(1)+'%';
+    const cols = [
+      { label: 'Pitches', get: s => s.pitches }, { label: 'BIP', get: s => s.bip },
+      { label: 'AvgEV', get: s => f1(s.avgEV) }, { label: 'MaxEV', get: s => f1(s.maxEV) },
+      { label: 'Hit95+%', get: s => pct(s.hit95Pct) }, { label: 'LA10-30%', get: s => pct(s.la1030Pct) },
+      { label: 'Barrel%', get: s => pct(s.barrelPct) }, { label: 'MaxDist', get: s => f1(s.maxDist) },
+      { label: 'Contact%', get: s => pct(s.contactPct) }, { label: 'Z-Contact%', get: s => pct(s.zContactPct) },
+      { label: 'Chase%', get: s => pct(s.chasePct) },
+    ];
+    const overall = computeExitVeloStats(rows);
+    const vsL = computeExitVeloStats(rows.filter(r => r.pitcher_throws === 'L'));
+    const vsR = computeExitVeloStats(rows.filter(r => r.pitcher_throws === 'R'));
+    const byPitch = {};
+    rows.forEach(r => { const d = pitchTypeDisplay(r.tagged_pitch_type); byPitch[d] = byPitch[d]||[]; byPitch[d].push(r); });
+    const pitchOrder = ['Fastball','TwoSeam','Sinker','Cutter','ChangeUp','Splitter','Slider','Curveball','Sweeper','Other','Undefined','Knuckleball'];
+    return `
+      <div class="section-label" style="margin-top:0;">Overall</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        <tr>${cols.map(c=>`<td>${c.get(overall)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitcher Hand</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Side</th>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        <tr><td><b>Left</b></td>${cols.map(c=>`<td>${c.get(vsL)}</td>`).join('')}</tr>
+        <tr><td><b>Right</b></td>${cols.map(c=>`<td>${c.get(vsR)}</td>`).join('')}</tr>
+      </table></div>
+      <div class="section-label">By Pitch Type</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Pitch</th>${cols.map(c=>`<th>${c.label}</th>`).join('')}</tr>
+        ${pitchOrder.filter(p => byPitch[p]).map(p => {
+          const s = computeExitVeloStats(byPitch[p]);
+          return `<tr><td>${p}</td>${cols.map(c=>`<td>${c.get(s)}</td>`).join('')}</tr>`;
+        }).join('')}
+      </table></div>
+      <div class="status">MaxDist relies on a field confirmed populated for only ~6% of balls in play. Z-Contact% approximates "in zone" using this app's Heart+Shadow location buckets.</div>`;
+  }
+
+  // ---- Exit Velo Charts ----
+  function hittingSubExitVeloCharts(rows){
+    const vsRHP = rows.filter(r => r.pitcher_throws === 'R');
+    const vsLHP = rows.filter(r => r.pitcher_throws === 'L');
+    return `
+      <div class="section-label" style="margin-top:0;">vs RHP</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${evScatterPanel(vsRHP, 'Exit Velo vs RHP')}
+        ${evScatterPanel(vsRHP.filter(r => pitchFamilyFBvsOS(r.tagged_pitch_type)==='FB'), 'Exit Velo vs RHP — FB')}
+        ${evScatterPanel(vsRHP.filter(r => pitchFamilyFBvsOS(r.tagged_pitch_type)==='OS/BB'), 'Exit Velo vs RHP — OS/BB')}
+      </div>
+      <div class="section-label">vs LHP</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;">
+        ${evScatterPanel(vsLHP, 'Exit Velo vs LHP')}
+        ${evScatterPanel(vsLHP.filter(r => pitchFamilyFBvsOS(r.tagged_pitch_type)==='FB'), 'Exit Velo vs LHP — FB')}
+        ${evScatterPanel(vsLHP.filter(r => pitchFamilyFBvsOS(r.tagged_pitch_type)==='OS/BB'), 'Exit Velo vs LHP — OS/BB')}
+      </div>
+      <div class="status">Horizontal/Vertical Location are converted from this app's normalized zone coordinates to an approximate real-feet position for visual consistency.</div>`;
+  }
+
+  // ---- SDS ----
+  function hittingSubSDS(rows){
+    if (sdsLeagueMean == null) {
+      return `<div class="empty-msg">SDS hasn't been computed for this database yet -- run enrich_sds.py, then reload.</div>`;
+    }
+    const scored = rows.filter(r => r.sds != null);
+    if (scored.length === 0) {
+      return `<div class="empty-msg">No SDS-scored pitches for these filters yet.</div>`;
+    }
+    const byHitter = {};
+    scored.forEach(r => {
+      byHitter[r.batter_id] = byHitter[r.batter_id] || { name: r.batter, sum: 0, n: 0 };
+      byHitter[r.batter_id].sum += r.sds; byHitter[r.batter_id].n++;
+    });
+    const leaderboard = Object.entries(byHitter).map(([id,s]) => {
+      const mean = s.sum/s.n; const { plus, grade } = sdsPlusAndGrade(mean);
+      return { name: s.name, pitches: s.n, mean, plus, grade };
+    }).sort((a,b) => b.plus - a.plus);
+    const byPitch = {};
+    scored.forEach(r => {
+      const d = pitchTypeDisplay(r.tagged_pitch_type);
+      byPitch[d] = byPitch[d] || { sum: 0, n: 0 };
+      byPitch[d].sum += r.sds; byPitch[d].n++;
+    });
+    const pitchOrder = ['Fastball','TwoSeam','Sinker','Cutter','ChangeUp','Splitter','Slider','Curveball','Sweeper','Other','Undefined','Knuckleball'];
+    const zoneOrder = ['Heart','Shadow','Chase','Waste'];
+    const byZone = {};
+    scored.forEach(r => {
+      if (!r.attack_zone) return;
+      byZone[r.attack_zone] = byZone[r.attack_zone] || { sum: 0, n: 0, swings: 0, whiffs: 0 };
+      byZone[r.attack_zone].sum += r.sds; byZone[r.attack_zone].n++;
+      if (SWING_CODES.has(r.pitch_call||'')) byZone[r.attack_zone].swings++;
+      if (r.pitch_call === 'SS') byZone[r.attack_zone].whiffs++;
+    });
+    const zoneColors = { Heart: '#4a9d5f', Shadow: '#e8843d', Chase: '#e8843d', Waste: '#d9453f' };
+    return `
+      <div class="section-label" style="margin-top:0;">Player Leaderboard</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Hitter</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Grade</th></tr>
+        ${leaderboard.map(h => `<tr><td>${h.name}</td><td>${h.pitches}</td><td>${h.mean.toFixed(1)}</td><td>${h.plus}</td><td>${h.grade}</td></tr>`).join('')}
+      </table></div>
+      <div class="section-label">By Pitch Type — Team</div>
+      <div style="overflow-x:auto;"><table class="stat-table">
+        <tr><th>Pitch</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
+        ${pitchOrder.filter(p => byPitch[p]).map(p => {
+          const s = byPitch[p]; const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
+          return `<tr><td>${p}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus}</td></tr>`;
+        }).join('')}
+      </table></div>
+      <div class="section-label">By Location — Team</div>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
+        <svg viewBox="0 0 200 200" width="200" height="200" style="background:white;border:1px solid #eee;border-radius:6px;">
+          <rect x="10" y="10" width="180" height="180" fill="${zoneColors.Waste}" opacity="0.5"/>
+          <rect x="40" y="40" width="120" height="120" fill="${zoneColors.Chase}" opacity="0.7"/>
+          <rect x="65" y="65" width="70" height="70" fill="${zoneColors.Shadow}" opacity="0.8"/>
+          <rect x="85" y="85" width="30" height="30" fill="${zoneColors.Heart}"/>
+          <text x="100" y="103" text-anchor="middle" fill="white" font-size="9" font-weight="bold">Heart</text>
+        </svg>
+        <div style="overflow-x:auto;flex:1;min-width:280px;"><table class="stat-table">
+          <tr><th>Zone</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Swing%</th><th>Whiff%</th></tr>
+          ${zoneOrder.filter(z => byZone[z]).map(z => {
+            const s = byZone[z]; const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
+            const swingPct = (s.swings/s.n*100).toFixed(1);
+            const whiffPct = s.swings ? (s.whiffs/s.swings*100).toFixed(1) : '0.0';
+            return `<tr><td>${z}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus}</td><td>${swingPct}%</td><td>${whiffPct}%</td></tr>`;
+          }).join('')}
+        </table></div>
+      </div>`;
+  }
+
+  // ---- Entry point, mirroring the Pitching tab's architecture exactly ----
+  let hittingSelectedSeason = null;
+  let hittingSelectedHitterId = 'all';
+  let hittingSelectedGameId = 'all';
+  let hittingActiveInnerTab = 'traditional';
+
+  async function populateHittingFilters(){
+    const seasonResp = await fetch(`${apiBase()}/rest/v1/pitches?select=season_year&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
+    const seasonRows = await seasonResp.json();
+    const seasons = [...new Set(seasonRows.map(r => r.season_year).filter(s => s != null))].sort((a,b) => b-a);
+    if (hittingSelectedSeason === null && seasons.length) hittingSelectedSeason = seasons[0];
+    const seasonSelect = document.getElementById('seasonSelect');
+    seasonSelect.innerHTML = seasons.map(s => `<option value="${s}" ${String(s)===String(hittingSelectedSeason)?'selected':''}>${s}</option>`).join('');
+
+    const hitterResp = await fetch(`${apiBase()}/rest/v1/pitches?select=batter_id,batter&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
+    const hitterRows = await hitterResp.json();
+    const hitterMap = new Map();
+    hitterRows.forEach(r => { if (r.batter_id) hitterMap.set(r.batter_id, r.batter); });
+    document.getElementById('hitterCountLabel').textContent = `${hitterMap.size} hitter(s) in range`;
+    const hitterSelect = document.getElementById('hitterSelect');
+    hitterSelect.innerHTML = `<option value="all">All</option>` +
+      [...hitterMap.entries()].sort((a,b)=>a[1].localeCompare(b[1]))
+        .map(([id,name]) => `<option value="${id}" ${id===hittingSelectedHitterId?'selected':''}>${name}</option>`).join('');
+
+    const gameResp = await fetch(`${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitcher_team&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
+    const gameRows = await gameResp.json();
+    const gameMap = new Map();
+    gameRows.forEach(r => { if (r.trackman_game_id) gameMap.set(r.trackman_game_id, `${r.date || '?'} vs ${r.pitcher_team || '?'}`); });
+    const gameSelect = document.getElementById('gameSelect');
+    const sortedGames = [...gameMap.entries()].sort((a,b) => b[1].localeCompare(a[1]));
+    gameSelect.innerHTML = `<option value="all">All</option>` +
+      sortedGames.map(([id,label]) => `<option value="${id}" ${id===hittingSelectedGameId?'selected':''}>${label}</option>`).join('');
+  }
+
+  function onHittingFilterChange(){
+    hittingSelectedSeason = document.getElementById('seasonSelect').value;
+    hittingSelectedHitterId = document.getElementById('hitterSelect').value;
+    hittingSelectedGameId = document.getElementById('gameSelect').value;
+    renderHittingTab();
+  }
+
+  async function renderHittingTab(){
+    const content = document.getElementById('tabContent');
+    if (!currentTeamId) { content.innerHTML = `<div class="empty-msg">Select a team from the sidebar first.</div>`; return; }
+    content.innerHTML = `<div class="status">Loading...</div>`;
+
+    try {
+      await populateHittingFilters();
+
+      const fields = 'batter_id,batter,pitch_call,plate_loc_side,plate_loc_height,exit_speed,angle,play_result,kor_bb,pitcher_throws,tagged_pitch_type,trackman_game_id,season_year,date,inning,top_bottom,pa_of_inning,sds,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored,attack_zone,balls,strikes,x_avg,x_slg,x_woba';
+      let url = `${apiBase()}/rest/v1/pitches?select=${fields}&batter_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
+      if (hittingSelectedSeason) url += `&season_year=eq.${encodeURIComponent(hittingSelectedSeason)}`;
+      if (hittingSelectedHitterId !== 'all') url += `&batter_id=eq.${encodeURIComponent(hittingSelectedHitterId)}`;
+      if (hittingSelectedGameId !== 'all') url += `&trackman_game_id=eq.${encodeURIComponent(hittingSelectedGameId)}`;
+
+      const resp = await fetch(url, { headers: headers() });
+      if (!resp.ok) { content.innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
+      const rows = await resp.json();
+      document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
+      if (rows.length === 0) {
+        content.innerHTML = `<div class="empty-msg">No pitches match these filters.</div>`;
+        return;
+      }
+
+      const innerTabs = [
+        { id: 'traditional', label: 'Traditional Stats', render: hittingSubTraditionalStats },
+        { id: 'advanced', label: 'Advanced Stats', render: hittingSubAdvancedStats },
+        { id: 'exitvelostats', label: 'Exit Velo Stats', render: hittingSubExitVeloStats },
+        { id: 'exitvelocharts', label: 'Exit Velo Charts', render: hittingSubExitVeloCharts },
+        { id: 'izwhiff2', label: 'IZ Whiff', render: hittingSubIZWhiff },
+        { id: 'chase2', label: 'Chase', render: hittingSubChase },
+        { id: 'swingdec2', label: 'Swing Decisions', render: hittingSubSwingDecisions },
+        { id: 'takes2', label: 'Takes', render: hittingSubTakes },
+        { id: 'sds2', label: 'SDS', render: hittingSubSDS },
+      ];
+      function renderInnerShell(){
+        content.innerHTML = `
+          <div class="hitting-inner-tabs">
+            ${innerTabs.map(t => `<button class="inner-tab-btn ${t.id===hittingActiveInnerTab?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
+          </div>
+          <div id="hittingInnerContent"></div>`;
+        content.querySelectorAll('.inner-tab-btn').forEach(btn => {
+          btn.addEventListener('click', () => { hittingActiveInnerTab = btn.dataset.sub; renderInnerShell(); });
+        });
+        const activeDef = innerTabs.find(t => t.id === hittingActiveInnerTab);
+        document.getElementById('hittingInnerContent').innerHTML = activeDef.render(rows);
+      }
+      renderInnerShell();
+    } catch (e) {
+      content.innerHTML = `<div class="empty-msg">${e.message}</div>`;
+    }
   }
 
   // Generic scatter with explicit axes -- unlike zoneScatterSVG (which is
@@ -1540,249 +2000,6 @@
       paper_bgcolor: '#3a3a38',
     };
     Plotly.newPlot('flight3dPlot', traces, layout, { responsive: true });
-  }
-
-  async function renderHitterDetail(batterId, batterName){
-    const content = document.getElementById('tabContent');
-    content.innerHTML = '';
-    const detailDiv = document.createElement('div');
-    detailDiv.className = 'pitcher-detail';
-    detailDiv.innerHTML = `<div class="status">Loading ${batterName}...</div>`;
-    content.appendChild(detailDiv);
-
-    try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitch_call,exit_speed,angle,plate_loc_side,plate_loc_height,attack_zone,balls,strikes,tagged_pitch_type,sds,inning,top_bottom,pa_of_inning,kor_bb,play_result,pitcher_throws,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored&batter_id=eq.${encodeURIComponent(batterId)}${dateFilterQS()}&limit=3000`;
-      const resp = await fetch(url, { headers: headers() });
-      const rows = await resp.json();
-      if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
-      const games = new Set(rows.map(r => r.trackman_game_id)).size;
-
-      const subtabs = [
-        { id: 'overview', label: 'Overview', render: hittingTeamSubOverview },
-        { id: 'outcomes', label: 'Outcomes', render: hitterSubOverview },
-        { id: 'sds', label: 'SDS', render: hitterSubSDS },
-        { id: 'exitvelo', label: 'Exit Velo', render: hitterSubExitVelo },
-        { id: 'izwhiff', label: 'IZ Whiff', render: hitterSubIZWhiff },
-        { id: 'chase', label: 'Chase', render: hitterSubChase },
-        { id: 'evcharts', label: 'Exit Velo Charts', render: hitterSubEVCharts },
-        { id: 'swingdec', label: 'Swing Decisions', render: hitterSubSwingDecisions },
-        { id: 'takes', label: 'Takes', render: hitterSubTakes },
-        { id: 'approach', label: 'Approach By Count', render: hitterSubApproachByCount },
-      ];
-      let activeSub = 'overview';
-      function renderShell(){
-        detailDiv.innerHTML = `
-          <span class="back-link" onclick="renderActiveTab()">&larr; Back to Team</span>
-          <div class="section-label" style="margin-top:0;">${batterName} — ${rows.length} pitches seen / ${games} game(s)</div>
-          <div class="subtabs-nav">
-            ${subtabs.map(t => `<button class="subtab-btn ${t.id===activeSub?'active':''}" data-sub="${t.id}">${t.label}</button>`).join('')}
-          </div>
-          <div id="subtabContent"></div>`;
-        detailDiv.querySelectorAll('.subtab-btn').forEach(btn => {
-          btn.addEventListener('click', () => { activeSub = btn.dataset.sub; renderShell(); });
-        });
-        document.getElementById('subtabContent').innerHTML = subtabs.find(t => t.id === activeSub).render(rows);
-      }
-      renderShell();
-    } catch (e) {
-      detailDiv.innerHTML = `<div class="empty-msg">${e.message}</div>`;
-    }
-  }
-
-  function hitterSubOverview(rows){
-    const total = rows.length;
-    let balls=0, calledStrikes=0, swingingStrikes=0, fouls=0, inPlay=0, hbp=0;
-    rows.forEach(r => {
-      if (r.pitch_call === 'B') balls++;
-      else if (r.pitch_call === 'SL') calledStrikes++;
-      else if (r.pitch_call === 'SS') swingingStrikes++;
-      else if (r.pitch_call === 'F') fouls++;
-      else if (r.pitch_call === 'IP') inPlay++;
-      else if (r.pitch_call === 'HBP') hbp++;
-    });
-    const swings = swingingStrikes + fouls + inPlay;
-    const whiffPct = swings ? (swingingStrikes / swings * 100) : 0;
-    const outsideZone = rows.filter(r => r.attack_zone === 'Chase' || r.attack_zone === 'Waste');
-    const outsideSwung = outsideZone.filter(r => SWING_CODES.has(r.pitch_call || '')).length;
-    const chasePct = outsideZone.length ? (outsideSwung / outsideZone.length * 100) : 0;
-    return `
-      <table class="stat-table">
-        <tr><th>Outcome</th><th>Count</th><th>%</th></tr>
-        <tr><td>Ball</td><td>${balls}</td><td>${(balls/total*100).toFixed(1)}%</td></tr>
-        <tr><td>Called Strike</td><td>${calledStrikes}</td><td>${(calledStrikes/total*100).toFixed(1)}%</td></tr>
-        <tr><td>Swinging Strike</td><td>${swingingStrikes}</td><td>${(swingingStrikes/total*100).toFixed(1)}%</td></tr>
-        <tr><td>Foul</td><td>${fouls}</td><td>${(fouls/total*100).toFixed(1)}%</td></tr>
-        <tr><td>In Play</td><td>${inPlay}</td><td>${(inPlay/total*100).toFixed(1)}%</td></tr>
-        <tr><td>HBP</td><td>${hbp}</td><td>${(hbp/total*100).toFixed(1)}%</td></tr>
-        <tr><td><b>Whiff% (of swings)</b></td><td colspan="2">${whiffPct.toFixed(1)}%</td></tr>
-        <tr><td><b>Chase% (of pitches outside the zone)</b></td><td colspan="2">${chasePct.toFixed(1)}%</td></tr>
-      </table>`;
-  }
-
-  function hitterSubSDS(rows){
-    const scored = rows.filter(r => r.sds != null);
-    if (scored.length === 0) {
-      return `<div class="empty-msg">No SDS-scored pitches for this hitter yet -- run enrich_sds.py, then reload.</div>`;
-    }
-    const overall = scored.reduce((s,r) => s+r.sds, 0) / scored.length;
-    const { plus, grade } = sdsPlusAndGrade(overall);
-
-    const byType = {};
-    scored.forEach(r => {
-      const t = r.tagged_pitch_type || 'Unknown';
-      byType[t] = byType[t] || { sum:0, n:0 };
-      byType[t].sum += r.sds; byType[t].n++;
-    });
-    const typeRows = Object.entries(byType).sort((a,b)=>b[1].n-a[1].n);
-
-    const zoneOrder = ['Heart','Shadow','Chase','Waste'];
-    const byZone = {};
-    scored.forEach(r => {
-      if (!r.attack_zone) return;
-      byZone[r.attack_zone] = byZone[r.attack_zone] || { sum:0, n:0 };
-      byZone[r.attack_zone].sum += r.sds; byZone[r.attack_zone].n++;
-    });
-
-    return `
-      <table class="stat-table" style="max-width:400px;">
-        <tr><th>Pitches</th><th>Mean SDS</th><th>SDS+</th><th>Grade</th></tr>
-        <tr><td>${scored.length}</td><td>${overall.toFixed(1)}</td><td>${plus ?? '-'}</td><td>${grade ?? '-'}</td></tr>
-      </table>
-      <div class="section-label">By Pitch Type</div>
-      <table class="stat-table">
-        <tr><th>Pitch Type</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
-        ${typeRows.map(([type,s]) => {
-          const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
-          return `<tr><td>${type}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus ?? '-'}</td></tr>`;
-        }).join('')}
-      </table>
-      <div class="section-label">By Location (Heart / Shadow / Chase / Waste)</div>
-      <table class="stat-table">
-        <tr><th>Zone</th><th>Pitches</th><th>Mean SDS</th><th>SDS+</th></tr>
-        ${zoneOrder.filter(z => byZone[z]).map(z => {
-          const s = byZone[z]; const m = s.sum/s.n; const r = sdsPlusAndGrade(m);
-          return `<tr><td>${z}</td><td>${s.n}</td><td>${m.toFixed(1)}</td><td>${r.plus ?? '-'}</td></tr>`;
-        }).join('')}
-      </table>
-      <div class="status">SDS+ always compares against the fixed league-wide baseline (computed once by enrich_sds.py across the whole database), not just this team or whatever's currently filtered.</div>`;
-  }
-
-  function hitterSubExitVelo(rows){
-    const inPlayRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null);
-    const avgEV = inPlayRows.length ? inPlayRows.reduce((s,r)=>s+r.exit_speed,0)/inPlayRows.length : null;
-    const maxEV = inPlayRows.length ? Math.max(...inPlayRows.map(r=>r.exit_speed)) : null;
-    const laRows = inPlayRows.filter(r=>r.angle!=null);
-    const avgLA = laRows.length ? laRows.reduce((s,r)=>s+r.angle,0)/laRows.length : null;
-    const hardHitPct = inPlayRows.length ? (inPlayRows.filter(r=>r.exit_speed>=95).length/inPlayRows.length*100) : null;
-    const gb = laRows.filter(r=>r.angle<10).length;
-    const ld = laRows.filter(r=>r.angle>=10 && r.angle<25).length;
-    const fb = laRows.filter(r=>r.angle>=25 && r.angle<50).length;
-    const pu = laRows.filter(r=>r.angle>=50).length;
-    return `
-      <table class="stat-table">
-        <tr><th>Balls In Play</th><th>Avg EV</th><th>Max EV</th><th>Avg Launch Angle</th><th>Hard Hit%</th></tr>
-        <tr>
-          <td>${inPlayRows.length}</td>
-          <td>${avgEV!=null?avgEV.toFixed(1):'-'}</td>
-          <td>${maxEV!=null?maxEV.toFixed(1):'-'}</td>
-          <td>${avgLA!=null?avgLA.toFixed(1):'-'}</td>
-          <td>${hardHitPct!=null?hardHitPct.toFixed(1)+'%':'-'}</td>
-        </tr>
-      </table>
-      <div class="section-label">Batted Ball Type (approximated from launch angle)</div>
-      <table class="stat-table">
-        <tr><th>Type</th><th>Angle Range</th><th>Count</th><th>%</th></tr>
-        <tr><td>Ground Ball</td><td>&lt;10°</td><td>${gb}</td><td>${laRows.length?(gb/laRows.length*100).toFixed(1):'0.0'}%</td></tr>
-        <tr><td>Line Drive</td><td>10-25°</td><td>${ld}</td><td>${laRows.length?(ld/laRows.length*100).toFixed(1):'0.0'}%</td></tr>
-        <tr><td>Fly Ball</td><td>25-50°</td><td>${fb}</td><td>${laRows.length?(fb/laRows.length*100).toFixed(1):'0.0'}%</td></tr>
-        <tr><td>Popup</td><td>&ge;50°</td><td>${pu}</td><td>${laRows.length?(pu/laRows.length*100).toFixed(1):'0.0'}%</td></tr>
-      </table>
-      <div class="status">Batted-ball type here is approximated from launch angle since the API doesn't provide a tagged hit-type field directly -- treat as directional, not exact.</div>`;
-  }
-
-  function hitterSubIZWhiff(rows){
-    const whiffs = rows.filter(r => r.pitch_call === 'SS');
-    return `
-      <div class="section-label" style="margin-top:0;">Swinging Strike Locations (n=${whiffs.length})</div>
-      ${whiffs.length ? zoneHeatmapSVG(whiffs, {width:260,height:280}) : '<div class="empty-msg">No swinging strikes recorded.</div>'}`;
-  }
-
-  function hitterSubChase(rows){
-    const chased = rows.filter(r => (r.attack_zone === 'Chase' || r.attack_zone === 'Waste') && SWING_CODES.has(r.pitch_call||''));
-    return `
-      <div class="section-label" style="margin-top:0;">Chased Pitches (swung at, outside the zone) — n=${chased.length}</div>
-      ${chased.length ? zoneHeatmapSVG(chased, {width:260,height:280}) : '<div class="empty-msg">No chased pitches recorded.</div>'}`;
-  }
-
-  function hitterSubEVCharts(rows){
-    const inPlayRows = rows.filter(r => r.pitch_call === 'IP' && r.exit_speed != null && r.angle != null);
-    return `
-      <div class="section-label" style="margin-top:0;">Exit Velo vs Launch Angle (n=${inPlayRows.length})</div>
-      ${inPlayRows.length ? axisScatterSVG(inPlayRows, {
-        xField:'exit_speed', yField:'angle', xMin:50, xMax:115, yMin:-30, yMax:60,
-        xLabel:'Exit Velo (mph)', yLabel:'Launch Angle (°)',
-        colorFn: r => r.exit_speed >= 95 ? '#8C2232' : '#999', width:320, height:280
-      }) : '<div class="empty-msg">No balls in play with both EV and launch angle recorded.</div>'}
-      <div class="status">Dark red = hard-hit (95+ mph exit velo). No true spray/direction chart here -- the API doesn't provide batted-ball direction or distance, only exit velo and launch angle.</div>`;
-  }
-
-  function hitterSubSwingDecisions(rows){
-    return `
-      <div class="section-label" style="margin-top:0;">All Pitches Seen — Swing (maroon) vs Take (gray), n=${rows.length}</div>
-      ${zoneScatterSVG(rows, {
-        colorFn: r => SWING_CODES.has(r.pitch_call||'') ? '#8C2232' : '#999',
-        width: 300, height: 300
-      })}
-      <div class="chip-legend" style="display:flex;gap:12px;margin-top:8px;">
-        <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:10px;height:10px;border-radius:50%;background:#8C2232;display:inline-block;"></span>Swung</span>
-        <span style="display:flex;align-items:center;gap:4px;font-size:12px;"><span style="width:10px;height:10px;border-radius:50%;background:#999;display:inline-block;"></span>Took</span>
-      </div>`;
-  }
-
-  function hitterSubTakes(rows){
-    const takes = rows.filter(r => r.pitch_call === 'B' || r.pitch_call === 'SL');
-    const goodTakes = takes.filter(r => r.pitch_call === 'B').length;
-    const badTakes = takes.filter(r => r.pitch_call === 'SL').length;
-    return `
-      <div class="section-label" style="margin-top:0;">Taken Pitches — Ball (green, good take) vs Called Strike (red, missed) — n=${takes.length}</div>
-      ${takes.length ? zoneScatterSVG(takes, {
-        colorFn: r => r.pitch_call === 'B' ? '#2a9d8f' : '#8C2232',
-        width: 300, height: 300
-      }) : '<div class="empty-msg">No taken pitches recorded.</div>'}
-      <table class="stat-table" style="margin-top:10px;max-width:320px;">
-        <tr><th>Take Type</th><th>Count</th><th>%</th></tr>
-        <tr><td>Ball (good take)</td><td>${goodTakes}</td><td>${takes.length?(goodTakes/takes.length*100).toFixed(1):'0.0'}%</td></tr>
-        <tr><td>Called Strike (missed)</td><td>${badTakes}</td><td>${takes.length?(badTakes/takes.length*100).toFixed(1):'0.0'}%</td></tr>
-      </table>`;
-  }
-
-  // Labeled explicitly as this app's interpretation of "Sequences" -- a
-  // pitch-by-pitch sequence replay isn't built yet, but swing/contact
-  // discipline by count is a genuinely sequence-related view given what's
-  // available, and a reasonable stand-in until true sequencing is built.
-  function hitterSubApproachByCount(rows){
-    const counts = {};
-    rows.forEach(r => {
-      if (r.balls==null || r.strikes==null) return;
-      const key = `${r.balls}-${r.strikes}`;
-      counts[key] = counts[key] || { total:0, swings:0, whiffs:0 };
-      counts[key].total++;
-      if (SWING_CODES.has(r.pitch_call||'')) counts[key].swings++;
-      if (r.pitch_call === 'SS') counts[key].whiffs++;
-    });
-    const order = ['0-0','1-0','0-1','2-0','1-1','0-2','3-0','2-1','1-2','3-1','2-2','3-2'];
-    const present = order.filter(k => counts[k]);
-    return `
-      <table class="stat-table">
-        <tr><th>Count</th><th>Pitches</th><th>Swing%</th><th>Whiff% (of swings)</th></tr>
-        ${present.map(k => {
-          const c = counts[k];
-          const swingPct = (c.swings/c.total*100).toFixed(1);
-          const whiffPct = c.swings ? (c.whiffs/c.swings*100).toFixed(1) : '0.0';
-          return `<tr><td>${k}</td><td>${c.total}</td><td>${swingPct}%</td><td>${whiffPct}%</td></tr>`;
-        }).join('')}
-      </table>
-      <div class="status">This is an approach-by-count breakdown, not a true pitch-sequence replay (e.g. "what came after a first-pitch fastball") -- that's not built yet. Labeled here as the closest available stand-in for the old app's Sequences tab.</div>`;
   }
 
   function sdsPlusAndGrade(meanSds){
