@@ -1963,7 +1963,16 @@
     const hbFt = (pitch.horz_break || 0) / 12;
     // Positive induced vertical break (backspin "rise" relative to a
     // spinless pitch) partially counteracts gravity's downward bulge.
-    const zBulgePeak = -gravityPeak + ivbFt * 0.5;
+    // Capped at a small, fixed, physically-realistic ceiling -- confirmed
+    // via a real screenshot that this was being pushed well above the
+    // release point for some pitches, which isn't physically possible no
+    // matter how much backspin a pitch has. A first attempt at this
+    // clamp scaled with the release-to-plate height gap, but testing
+    // showed that actually made the clamp LOOSER for exactly the
+    // pitches most prone to this (big drops), which is backwards --
+    // a flat cap avoids that problem entirely.
+    let zBulgePeak = -gravityPeak + ivbFt * 0.5;
+    if (zBulgePeak > 0.6) zBulgePeak = 0.6;
     const xBulgePeak = hbFt * 0.5;
 
     const xs = [], ys = [], zs = [];
@@ -2070,7 +2079,15 @@
         // live screenshot of this chart specifically -- 3D camera
         // placement is inherently iterative and I can't render real
         // Plotly output myself to fine-tune it further right now.
-        camera: { eye: { x: 0.25, y: 1.8, z: 0.9 } },
+        // Raised substantially and pulled back further from the plate --
+        // the previous z=0.9 (roughly shin height) put the camera BELOW
+        // most of the actual pitch trajectory, looking up and away
+        // toward the mound. A real screenshot showed this reading as
+        // disorienting/"upside down": the natural mental model is
+        // release-high-and-far, plate-lower-and-near, and a too-low
+        // camera inverts that sense. This targets roughly catcher/
+        // umpire eye level looking out, matching real broadcast framing.
+        camera: { eye: { x: 0.3, y: 2.6, z: 4.2 }, up: { x: 0, y: 0, z: 1 } },
         bgcolor: '#3a3a38',
       },
       margin: { l: 0, r: 0, t: 10, b: 0 },
