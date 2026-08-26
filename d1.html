@@ -74,32 +74,6 @@
   .tab-btn.active { color: white; background: var(--maroon); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
   .tab-btn:disabled { color: #c4bdb4; cursor: default; }
 
-  /* Scoped dark theme for the BC Hitting Lab tab specifically -- matches
-     the reference "Hitter HQ" 3D tool's own dark aesthetic, which is
-     intentionally different from the rest of this app's light BC theme.
-     Every rule here is prefixed with .hitlab-scope so it can't leak out
-     and affect Pitching/Hitting/anything else. */
-  .hitlab-scope { --hl-bg:#0a0d14; --hl-panel:#12161f; --hl-panel2:#1a2030; --hl-border:#262d3d;
-    --hl-text:#e8eaf0; --hl-dim:#8891a5; --hl-gold:#d4b06a;
-    background: var(--hl-bg); color: var(--hl-text); border-radius: 8px; padding: 16px; margin: -8px; }
-  .hitlab-scope select { background: var(--hl-panel2); border: 1px solid var(--hl-border); color: var(--hl-text);
-    padding: 7px 10px; border-radius: 6px; font-size: 12px; }
-  .hitlab-toprow { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 10px; }
-  .hitlab-filters { display: flex; gap: 10px; align-items: center; }
-  .hitlab-filters label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--hl-dim); margin-right: 4px; }
-  .hitlab-view-tabs, .hitlab-cam-tabs { display: flex; gap: 4px; }
-  .hitlab-view-tabs button, .hitlab-cam-tabs button { background: var(--hl-panel2); border: 1px solid var(--hl-border);
-    color: var(--hl-dim); padding: 7px 14px; font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
-    text-transform: uppercase; border-radius: 5px; cursor: pointer; font-family: inherit; }
-  .hitlab-view-tabs button.active { background: white; color: #111; }
-  .hitlab-cam-tabs button.active { background: var(--hl-gold); color: #1a1400; border-color: var(--hl-gold); }
-  .hitlab-cam-tabs { margin: 8px 0; }
-  .hitlab-status { font-size: 11px; color: var(--hl-dim); text-align: right; margin: 4px 0; }
-  .hitlab-panel { background: var(--hl-panel); border: 1px solid var(--hl-border); border-radius: 8px; padding: 4px; }
-  .hitlab-empty { color: var(--hl-dim); font-style: italic; padding: 60px; text-align: center; }
-  .hitlab-legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--hl-dim); padding: 8px 4px; }
-  .hitlab-grad { width: 140px; height: 8px; border-radius: 4px;
-    background: linear-gradient(90deg, #2255cc, #2fb0c8, #57c25a, #e8d23d, #d9453f); }
 
   .landing-view { background: linear-gradient(160deg, var(--maroon), #6e1a28); border-radius: 10px;
     padding: 60px 40px; min-height: 420px; }
@@ -831,7 +805,6 @@
     if (activeTab === null) renderLandingView();
     else if (activeTab === 'pitching') renderPitchingTab();
     else if (activeTab === 'hitting') renderHittingTab();
-    else if (activeTab === 'hittinglab') renderHittingLabTab();
   }
   function goBackToSelection(){
     activeTab = null;
@@ -842,7 +815,6 @@
     hitting: '<svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="1.8" fill="var(--gold)" stroke="none"/><line x1="7.2" y1="16.8" x2="17" y2="7" stroke-linecap="round"/><polyline points="10,7 17,7 17,14" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     pitching: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5 8c3 2 3 6 0 8M19 8c-3 2-3 6 0 8" stroke-linecap="round"/></svg>',
     scout: '<svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><line x1="15" y1="15" x2="20.5" y2="20.5" stroke-linecap="round"/></svg>',
-    hittinglab: '<svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v6l-5.5 9.5A1.5 1.5 0 0 0 5.8 21h12.4a1.5 1.5 0 0 0 1.3-2.5L14 9V3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
 
   function renderLandingView(){
@@ -851,7 +823,6 @@
       { id: 'hitting', label: 'Hitting', enabled: true },
       { id: 'pitching', label: 'Pitching', enabled: true },
       { id: 'scout', label: 'Scout', enabled: false },
-      { id: 'hittinglab', label: 'Hitting Lab', enabled: true },
     ];
     content.innerHTML = `
       <div class="landing-view">
@@ -1630,7 +1601,7 @@
     content.appendChild(detailDiv);
 
     try {
-      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side,vert_appr_angle,horz_appr_angle,inning,top_bottom,pa_of_inning,kor_bb,play_result,outs_on_play,exit_speed,angle,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored&pitcher_id=eq.${encodeURIComponent(pitcherId)}${dateFilterQS()}&limit=3000`;
+      const url = `${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,tagged_pitch_type,pitch_call,rel_speed,spin_rate,induced_vert_break,horz_break,plate_loc_side,plate_loc_height,attack_zone,rel_height,rel_side,extension,balls,strikes,batter_side,pitcher_throws,vert_appr_angle,horz_appr_angle,inning,top_bottom,pa_of_inning,kor_bb,play_result,outs_on_play,exit_speed,angle,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored&pitcher_id=eq.${encodeURIComponent(pitcherId)}${dateFilterQS()}&limit=3000`;
       const resp = await fetch(url, { headers: headers() });
       const rows = await resp.json();
       if (rows.length === 0) { detailDiv.innerHTML = `<div class="empty-msg">No detail rows found.</div>`; return; }
@@ -1974,7 +1945,12 @@
     const releaseY = -(MOUND_TO_PLATE_FT - pitch.extension);
     const plateX = approxPlateX(pitch.plate_loc_side);
     const plateZ = approxPlateZ(pitch.plate_loc_height);
-    const releaseX = pitch.rel_side, releaseZ = pitch.rel_height;
+    // Lefties were showing up releasing from the righty side -- mirroring
+    // release side specifically for LHP fixes this. Plate crossing
+    // (plate_loc_side) is a fixed, handedness-independent physical
+    // position (which side of the plate the ball crosses, regardless of
+    // who threw it) and does NOT get this same treatment.
+    const releaseX = (pitch.pitcher_throws === 'L' ? -1 : 1) * pitch.rel_side, releaseZ = pitch.rel_height;
 
     const distance = MOUND_TO_PLATE_FT - pitch.extension;
     const veloFtS = (pitch.rel_speed || 90) * 1.467;
@@ -2354,209 +2330,6 @@
   }
 
 
-  // ---- Hitting Lab ----
-  // Trend and Batted Ball are fully achievable with confirmed-available
-  // data. Space, Heat (Contact Point), and Spray depend on contact_position_x/y/z
-  // and direction (ExitDir) -- newly requested via the ingestion pipeline's
-  // `columns` parameter, but NOT YET VERIFIED against a live pull. Each of
-  // those checks for real data at render time and shows a clear "pending"
-  // message rather than a broken or empty-looking chart if it's not there yet.
-  //
-  // ---- Hitting Lab: BC-only, built on raw CSV exports (bc_hitting.json,
-  // combining 2025SpringData.csv + 2026SpringData.csv), NOT the Supabase/
-  // TruMedia pipeline the rest of this app uses. Confirmed those raw
-  // exports have ~95% Distance/ExitSpeed coverage for BC's own batted
-  // balls, vs. the ~6% we get through TruMedia for any team -- which is
-  // exactly why this is BC-only for now rather than D1-wide like
-  // everything else. If TruMedia's coverage ever improves, or if raw
-  // exports become available for other teams, this could be widened.
-  let hitlabRows = null;
-  let hitlabActiveView = 'space';
-  let hitlabActiveCamera = 'side';
-  let hitlabSelectedSeason = null;
-  let hitlabSelectedHitter = 'all';
-
-  const HITLAB_VIEWS = [
-    { id: 'space', label: 'Space' },
-    { id: 'heat', label: 'Heat' },
-    { id: 'spray', label: 'Spray' },
-    { id: 'trend', label: 'Trend' },
-    { id: 'battedball', label: 'Batted Ball' },
-  ];
-  const HITLAB_CAMERAS = [
-    { id: 'catcher', label: 'Catcher', eye: {x: 0, y: -2.8, z: 0.6} },
-    { id: 'pitcher', label: 'Pitcher', eye: {x: 0, y: 2.8, z: 0.6} },
-    { id: 'side', label: 'Side', eye: {x: 2.6, y: 0.3, z: 0.7} },
-    { id: 'overhead', label: 'Overhead', eye: {x: 0.01, y: 0.01, z: 3.2} },
-  ];
-
-  function hitlabEvColor(ev){
-    if (ev == null) return '#888';
-    const t = Math.max(0, Math.min(1, (ev - 65) / (108 - 65)));
-    const stops = [[0,[34,85,204]],[0.3,[47,176,200]],[0.55,[87,194,90]],[0.78,[232,210,61]],[1,[217,69,63]]];
-    for (let i=0;i<stops.length-1;i++){
-      const [t0,c0]=stops[i], [t1,c1]=stops[i+1];
-      if (t <= t1) {
-        const f = (t-t0)/(t1-t0||1);
-        const c = c0.map((v,j)=>Math.round(v+(c1[j]-v)*f));
-        return `rgb(${c[0]},${c[1]},${c[2]})`;
-      }
-    }
-    return 'rgb(217,69,63)';
-  }
-
-  // Real physics-based trajectory using each row's actual ExitSpeed/
-  // Distance/Bearing/HangTime -- confirmed against a real recorded home
-  // run (373 ft / 4.65s) to land at exactly the right distance with a
-  // realistic ~88 ft apex, not an approximation shared across all rows.
-  function hitlabTrajectory(row, nSamples=28){
-    const T = row.HangTime;
-    const dist = row.Distance;
-    const bearingRad = (row.Bearing || 0) * Math.PI / 180;
-    if (T == null || dist == null || T <= 0) return null;
-    const g = 32.2;
-    const h0 = 2.5;
-    const v0 = (0.5*g*T*T - h0) / T;
-    const pts = [];
-    for (let i=0;i<=nSamples;i++){
-      const t = (i/nSamples) * T;
-      const frac = t / T;
-      const x = dist * frac * Math.sin(bearingRad);
-      const y = dist * frac * Math.cos(bearingRad);
-      let z = h0 + v0*t - 0.5*g*t*t;
-      if (z < 0) z = 0;
-      pts.push({x, y, z});
-    }
-    return pts;
-  }
-
-  async function renderHittingLabTab(){
-    const content = document.getElementById('tabContent');
-    if (currentTeamName !== 'Boston College') {
-      content.innerHTML = `<div class="empty-msg">Hitting Lab is BC-only for now -- it's built on Boston College's own raw TrackMan exports, which have far more complete batted-ball data (~95%) than what's available through the TruMedia pipeline for other teams (~6%). Switch to Boston College in the sidebar to use it.</div>`;
-      return;
-    }
-    content.innerHTML = `<div class="hitlab-scope"><div class="hitlab-status">Loading BC hitting data...</div></div>`;
-    try {
-      if (hitlabRows === null) {
-        const resp = await fetch('bc_hitting.json');
-        if (!resp.ok) throw new Error(`Could not load bc_hitting.json (HTTP ${resp.status}) -- make sure it's committed alongside d1.html in the repo.`);
-        hitlabRows = await resp.json();
-      }
-      const seasons = [...new Set(hitlabRows.map(r => (r.Date||'').slice(0,4)).filter(Boolean))].sort().reverse();
-      if (hitlabSelectedSeason === null) hitlabSelectedSeason = seasons[0];
-      const hitters = [...new Set(hitlabRows.map(r => r.Batter).filter(Boolean))].sort();
-
-      content.innerHTML = `
-        <div class="hitlab-scope">
-          <div class="hitlab-toprow">
-            <div class="hitlab-view-tabs" id="hitlabViewTabs">
-              ${HITLAB_VIEWS.map(v => `<button class="${v.id===hitlabActiveView?'active':''}" data-view="${v.id}">${v.label}</button>`).join('')}
-            </div>
-            <div class="hitlab-filters">
-              <label for="hitlabSeason">Season</label>
-              <select id="hitlabSeason">${seasons.map(s => `<option value="${s}" ${s===hitlabSelectedSeason?'selected':''}>${s}</option>`).join('')}</select>
-              <label for="hitlabHitter">Hitter</label>
-              <select id="hitlabHitter"><option value="all">All BC Hitters</option>${hitters.map(h => `<option value="${h}" ${h===hitlabSelectedHitter?'selected':''}>${h}</option>`).join('')}</select>
-            </div>
-          </div>
-          <div class="hitlab-cam-tabs" id="hitlabCamTabs">
-            ${HITLAB_CAMERAS.map(c => `<button class="${c.id===hitlabActiveCamera?'active':''}" data-cam="${c.id}">${c.label}</button>`).join('')}
-          </div>
-          <div class="hitlab-status" id="hitlabStatus"></div>
-          <div class="hitlab-panel"><div id="hitlabPlotArea" style="height:520px;"></div></div>
-          <div class="hitlab-legend" id="hitlabLegend"></div>
-        </div>`;
-
-      document.getElementById('hitlabSeason').addEventListener('change', (e) => { hitlabSelectedSeason = e.target.value; hitlabRenderActiveView(); });
-      document.getElementById('hitlabHitter').addEventListener('change', (e) => { hitlabSelectedHitter = e.target.value; hitlabRenderActiveView(); });
-      document.querySelectorAll('#hitlabViewTabs button').forEach(btn => {
-        btn.addEventListener('click', () => {
-          hitlabActiveView = btn.dataset.view;
-          document.querySelectorAll('#hitlabViewTabs button').forEach(b => b.classList.toggle('active', b===btn));
-          document.getElementById('hitlabCamTabs').style.display = hitlabActiveView === 'space' ? 'flex' : 'none';
-          hitlabRenderActiveView();
-        });
-      });
-      document.querySelectorAll('#hitlabCamTabs button').forEach(btn => {
-        btn.addEventListener('click', () => {
-          hitlabActiveCamera = btn.dataset.cam;
-          document.querySelectorAll('#hitlabCamTabs button').forEach(b => b.classList.toggle('active', b===btn));
-          const cam = HITLAB_CAMERAS.find(c => c.id === hitlabActiveCamera);
-          Plotly.relayout('hitlabPlotArea', { 'scene.camera.eye': cam.eye });
-        });
-      });
-      hitlabRenderActiveView();
-    } catch (e) {
-      content.innerHTML = `<div class="hitlab-scope"><div class="hitlab-empty">${e.message}</div></div>`;
-    }
-  }
-
-  function hitlabFilteredRows(){
-    return hitlabRows.filter(r =>
-      (r.Date||'').slice(0,4) === hitlabSelectedSeason &&
-      (hitlabSelectedHitter === 'all' || r.Batter === hitlabSelectedHitter)
-    );
-  }
-
-  function hitlabRenderActiveView(){
-    if (hitlabActiveView === 'space') return hitlabRenderSpaceView();
-    Plotly.purge('hitlabPlotArea');
-    document.getElementById('hitlabLegend').innerHTML = '';
-    document.getElementById('hitlabStatus').textContent = '';
-    document.getElementById('hitlabPlotArea').innerHTML =
-      `<div class="hitlab-empty">"${HITLAB_VIEWS.find(v=>v.id===hitlabActiveView).label}" is coming in a follow-up pass -- not built yet.</div>`;
-  }
-
-  function hitlabRenderSpaceView(){
-    const rows = hitlabFilteredRows().filter(r => r.PitchCall === 'InPlay' && r.Distance != null && r.HangTime != null);
-    document.getElementById('hitlabStatus').textContent = `showing ${rows.length} of ${rows.length} batted balls`;
-    document.getElementById('hitlabLegend').innerHTML = `EV <div class="hitlab-grad"></div> 65-108 mph`;
-    if (rows.length === 0) {
-      Plotly.purge('hitlabPlotArea');
-      document.getElementById('hitlabPlotArea').innerHTML = `<div class="hitlab-empty">No batted balls with full trajectory data for this selection.</div>`;
-      return;
-    }
-    document.getElementById('hitlabPlotArea').innerHTML = '';
-    const traces = [];
-    rows.forEach(r => {
-      const traj = hitlabTrajectory(r);
-      if (!traj) return;
-      const color = hitlabEvColor(r.ExitSpeed);
-      traces.push({
-        type: 'scatter3d', mode: 'lines', x: traj.map(p=>p.x), y: traj.map(p=>p.y), z: traj.map(p=>p.z),
-        line: { color, width: 3 }, hoverinfo: 'skip', showlegend: false,
-      });
-      const last = traj[traj.length-1];
-      traces.push({
-        type: 'scatter3d', mode: 'markers', x: [last.x], y: [last.y], z: [last.z],
-        marker: { color, size: 4 }, showlegend: false,
-        hovertemplate: `<b>${r.PlayResult||'?'}</b><br>` +
-          `Exit Velo: ${r.ExitSpeed?.toFixed(1) ?? '-'} mph<br>` +
-          `Launch: ${r.Angle?.toFixed(1) ?? '-'}&deg;<br>` +
-          `Distance: ${r.Distance?.toFixed(0) ?? '-'} ft<br>` +
-          `Pitch: ${r.RelSpeed?.toFixed(1) ?? '-'} mph<br>` +
-          `Movement: ${r.InducedVertBreak?.toFixed(1) ?? '-'}" IVB / ${r.HorzBreak?.toFixed(1) ?? '-'}" HB<br>` +
-          `Count: ${r.Balls ?? '-'}-${r.Strikes ?? '-'}<br>` +
-          `Date: ${r.Date || '-'}<extra></extra>`,
-      });
-    });
-    traces.push({
-      type: 'scatter3d', mode: 'markers', x: [0], y: [0], z: [0],
-      marker: { color: 'white', size: 5, symbol: 'diamond' }, hoverinfo: 'skip', showlegend: false,
-    });
-    const cam = HITLAB_CAMERAS.find(c => c.id === hitlabActiveCamera);
-    Plotly.newPlot('hitlabPlotArea', traces, {
-      paper_bgcolor: '#12161f', plot_bgcolor: '#12161f', font: { color: '#e8eaf0' }, margin: {l:0,r:0,t:10,b:0},
-      scene: {
-        xaxis: { title: '', showbackground: false, gridcolor: '#262d3d', zerolinecolor: '#3a4256' },
-        yaxis: { title: '', showbackground: false, gridcolor: '#262d3d', zerolinecolor: '#3a4256' },
-        zaxis: { title: '', showbackground: false, gridcolor: '#262d3d', zerolinecolor: '#3a4256', range: [0, 120] },
-        camera: { eye: cam.eye },
-        aspectmode: 'data',
-      },
-    }, { displayModeBar: false, responsive: true });
-  }
 </script>
 </body>
 </html>
