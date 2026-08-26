@@ -586,7 +586,45 @@
     return [...seen.values()];
   }
 
-  const FIP_CONSTANT = 3.10; // a reasonable approximate constant, not recalculated per season/league the way real FIP constants are
+  const FIP_CONSTANT_FALLBACK = 3.10; // used only if the real league-wide constant hasn't loaded yet
+
+  // ---- League-wide (D1-wide) aggregates for FIP constant / wRC+ / OPS+.
+  // Computed server-side (migration 012 -- league_season_aggregates RPC)
+  // instead of pulling every pitch from every team into the browser.
+  // Cached per season since it's the same for every team/player.
+  const leagueAggregatesCache = {};
+  async function getLeagueConstants(season){
+    if (!season) return null;
+    if (leagueAggregatesCache[season]) return leagueAggregatesCache[season];
+    try {
+      const resp = await fetch(`${apiBase()}/rest/v1/rpc/league_season_aggregates`, {
+        method: 'POST',
+        headers: { ...headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_season: Number(season) }),
+      });
+      if (!resp.ok) { leagueAggregatesCache[season] = null; return null; }
+      const rows = await resp.json();
+      const agg = Array.isArray(rows) ? rows[0] : rows;
+      if (!agg || !agg.total_outs || !agg.total_pa) { leagueAggregatesCache[season] = null; return null; }
+
+      const leagueRAPer9 = 27 * agg.total_runs / agg.total_outs;
+      const leagueFIPComponent = (13*agg.total_hr + 3*(agg.total_bb+agg.total_hbp) - 2*agg.total_k) / (agg.total_outs/3);
+      const fipConstant = leagueRAPer9 - leagueFIPComponent;
+
+      const WOBA_SCALE = 1.15; // widely-cited approximate value (commonly ~1.15-1.20 in published sabermetric work) -- NOT empirically re-derived from this dataset specifically, since that needs a full regression we don't have inputs for
+      const leagueWoba = (0.69*agg.total_bb + 0.72*agg.total_hbp + 0.89*agg.total_singles + 1.27*agg.total_doubles + 1.62*agg.total_triples + 2.10*agg.total_hr) / agg.total_obp_denom;
+      const leagueRPerPA = agg.total_runs / agg.total_pa;
+      const leagueObp = (agg.total_hits + agg.total_bb + agg.total_hbp) / agg.total_obp_denom;
+      const leagueSlg = agg.total_ab > 0 ? agg.total_tb / agg.total_ab : null;
+
+      const result = { fipConstant, wobaScale: WOBA_SCALE, leagueWoba, leagueRPerPA, leagueObp, leagueSlg, raw: agg };
+      leagueAggregatesCache[season] = result;
+      return result;
+    } catch (e) {
+      leagueAggregatesCache[season] = null;
+      return null;
+    }
+  }
 
   // ---- Team-wide traditional pitching stats. Runs/ERA/Runs-Per-Game are
   // NOT computed -- runs_scored isn't available from the API, and while
@@ -616,7 +654,7 @@
     const bb9 = ipDecimal > 0 ? (walks * 9 / ipDecimal) : null;
     const whip = ipDecimal > 0 ? ((walks + hits) / ipDecimal) : null;
     const kbb = walks > 0 ? (strikeouts / walks) : (strikeouts > 0 ? Infinity : null);
-    const fip = ipDecimal > 0 ? (((13*hrCount) + 3*(walks+hbp) - 2*strikeouts) / ipDecimal + FIP_CONSTANT) : null;
+    const fip = ipDecimal > 0 ? (((13*hrCount) + 3*(walks+hbp) - 2*strikeouts) / ipDecimal + FIP_CONSTANT_FALLBACK) : null;
 
     // runs_scored requires migration 010 + a fresh pull with the updated
     // pipeline -- older already-ingested games won't have it. Checked
@@ -710,8 +748,19 @@
     const xslg = xslgRows.length ? xslgRows.reduce((s,r)=>s+r.x_slg,0)/xslgRows.length : null;
     const xwobaRows = rows.filter(r => r.x_woba != null);
     const xwoba = xwobaRows.length ? xwobaRows.reduce((s,r)=>s+r.x_woba,0)/xwobaRows.length : null;
-    return { bip, babip: stats.babip, xba, xslg, woba: stats.woba, wobaCon, xwoba, iso: stats.iso };
+    let wrcPlus = null, opsPlus = null;
+    if (currentLeagueConstants && stats.woba != null) {
+      const lc = currentLeagueConstants;
+      const wraaPerPA = (stats.woba - lc.leagueWoba) / lc.wobaScale;
+      wrcPlus = lc.leagueRPerPA > 0 ? Math.round((((wraaPerPA + lc.leagueRPerPA) / lc.leagueRPerPA) * 100) * 10) / 10 : null;
+    }
+    if (currentLeagueConstants && stats.obp != null && stats.slg != null && lc_ops_valid(currentLeagueConstants)) {
+      const lc = currentLeagueConstants;
+      opsPlus = Math.round((100 * (stats.obp/lc.leagueObp + stats.slg/lc.leagueSlg - 1)) * 10) / 10;
+    }
+    return { bip, babip: stats.babip, xba, xslg, woba: stats.woba, wobaCon, xwoba, iso: stats.iso, wrcPlus, opsPlus };
   }
+  function lc_ops_valid(lc){ return lc.leagueObp > 0 && lc.leagueSlg > 0; }
 
   function computeExitVeloStats(rows){
     const pitches = rows.length;
@@ -880,7 +929,7 @@
       { label: 'xBA', get: s => f3(s.xba) }, { label: 'xSLG', get: s => f3(s.xslg) },
       { label: 'wOBA', get: s => f3(s.woba) }, { label: 'wOBAcon', get: s => f3(s.wobaCon) },
       { label: 'xwOBA', get: s => f3(s.xwoba) }, { label: 'ISO', get: s => f3(s.iso) },
-      { label: 'wRC+', get: () => 'N/A' }, { label: 'OPS+', get: () => 'N/A' },
+      { label: 'wRC+', get: s => s.wrcPlus==null?'N/A':s.wrcPlus }, { label: 'OPS+', get: s => s.opsPlus==null?'N/A':s.opsPlus },
     ];
     const overall = computeAdvancedStats(rows);
     const vsL = computeAdvancedStats(rows.filter(r => r.pitcher_throws === 'L'));
@@ -908,7 +957,7 @@
           return `<tr><td>${p}</td>${cols.map(c=>`<td>${c.get(s)}</td>`).join('')}</tr>`;
         }).join('')}
       </table></div>
-      <div class="status">wRC+/OPS+ need a league-wide baseline this app hasn't computed yet -- shown as N/A. xBA/xSLG/xwOBA come from a recent, unverified addition to the ingestion pipeline.</div>`;
+      <div class="status">${currentLeagueConstants ? `wRC+/OPS+ computed live from ${hittingSelectedSeason} D1-wide data -- park-neutral (no park factor applied), and wOBA scale uses a fixed 1.15 approximation rather than one empirically re-derived from this dataset.` : `wRC+/OPS+ show "N/A" -- the live D1-wide league baseline could not be loaded (requires migration 012's league_season_aggregates function in Supabase).`} xBA/xSLG/xwOBA come from a recent, unverified addition to the ingestion pipeline.</div>`;
   }
 
   // ---- Exit Velo Stats ----
@@ -1101,6 +1150,7 @@
         content.innerHTML = `<div class="empty-msg">${fetchErr.message}</div>`;
         return;
       }
+      currentLeagueConstants = await getLeagueConstants(hittingSelectedSeason);
       document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
       if (rows.length === 0) {
         content.innerHTML = `<div class="empty-msg">No pitches match these filters.</div>`;
@@ -1393,6 +1443,7 @@
 
   // ---- Pitching tab: team pitcher list -> pitcher detail ----
   let pitchingSelectedSeason = null;
+  let currentLeagueConstants = null; // set once per render, shared by Results (FIP) and Advanced Stats (wRC+/OPS+)
   let pitchingSelectedPitcherId = 'all';
   let pitchingSelectedGameId = 'all';
   let pitchingActiveInnerTab = 'results';
@@ -1432,7 +1483,7 @@
   // ---- Shared pitching stat computation, matching real reference
   // screenshots column-by-column. BF approximated as distinct PAs
   // (dedupeByPA) since we don't have a literal "batters faced" counter.
-  function computePitchingSummaryStats(rows){
+  function computePitchingSummaryStats(rows, fipConstant){
     const paRows = dedupeByPA(rows);
     const bf = paRows.length;
     const singles = paRows.filter(r => r.play_result === 'S').length;
@@ -1458,8 +1509,9 @@
     const baa = ab>0 ? hits/ab : null;
     const slg = ab>0 ? tb/ab : null;
     const whip = ip>0 ? (hits+walks)/ip : null;
-    const fip = ip>0 ? ((13*hr + 3*(walks+hbp) - 2*strikeouts)/ip + FIP_CONSTANT) : null;
-    return { ip, pitches, bf, hits, runs, runsAvailable, walks, hbp, strikeouts, hr, kPct, bbPct, baa, slg, whip, fip };
+    const fipConstantUsed = fipConstant != null ? fipConstant : FIP_CONSTANT_FALLBACK;
+    const fip = ip>0 ? ((13*hr + 3*(walks+hbp) - 2*strikeouts)/ip + fipConstantUsed) : null;
+    return { ip, pitches, bf, hits, runs, runsAvailable, walks, hbp, strikeouts, hr, kPct, bbPct, baa, slg, whip, fip, fipConstantUsed };
   }
 
   // Per-pitch-type row for Results / Results By Split. BAA/SLG use
@@ -1531,7 +1583,7 @@
 
   // ---- RESULTS ----
   function pitchingSubResults(rows){
-    const s = computePitchingSummaryStats(rows);
+    const s = computePitchingSummaryStats(rows, currentLeagueConstants ? currentLeagueConstants.fipConstant : null);
     const summaryCols = [
       { label:'IP', get:()=>s.ip.toFixed(1) }, { label:'P', get:()=>s.pitches }, { label:'BF', get:()=>s.bf },
       { label:'H', get:()=>s.hits }, { label:'R', get:()=>s.runsAvailable?s.runs:'N/A' }, { label:'BB', get:()=>s.walks },
@@ -1541,6 +1593,9 @@
       { label:'WHIP', get:()=>s.whip==null?'-':s.whip.toFixed(2) }, { label:'FIP', get:()=>s.fip==null?'-':s.fip.toFixed(2) },
     ];
     const byType = groupByPitchType(rows);
+    const fipNote = currentLeagueConstants
+      ? `FIP constant computed live from ${pitchingSelectedSeason} D1-wide data (${s.fipConstantUsed.toFixed(2)}), using runs-ALLOWED (not earned runs -- that field doesn't exist in this schema) as the runs-average input.`
+      : `FIP uses a fallback fixed constant (${FIP_CONSTANT_FALLBACK.toFixed(2)}) because the live D1-wide league constant could not be loaded (requires migration 012's league_season_aggregates function in Supabase).`;
     return `
       <div class="section-label" style="margin-top:0;">Summary</div>
       <div style="overflow-x:auto;"><table class="stat-table">
@@ -1555,7 +1610,7 @@
           return `<tr><td>${p}</td>${BY_PITCH_COLS.map(c=>`<td>${c.get(st)}</td>`).join('')}</tr>`;
         }).join('')}
       </table></div>
-      <div class="status">${s.runsAvailable ? '' : 'R shows "N/A" -- needs migration 010 + a fresh pull with the updated ingestion pipeline.'} FIP uses a fixed approximate constant (3.10), not recalculated per season/league. IZ%/Chase% use this app\\'s Heart/Shadow/Chase/Waste zone buckets as an approximation of a literal rulebook zone test.</div>`;
+      <div class="status">${s.runsAvailable ? '' : 'R shows "N/A" -- needs migration 010 + a fresh pull with the updated ingestion pipeline.'} ${fipNote} IZ%/Chase% use this app's Heart/Shadow/Chase/Waste zone buckets as an approximation of a literal rulebook zone test.</div>`;
   }
 
   // ---- RESULTS BY SPLIT ----
@@ -1806,6 +1861,7 @@
         content.innerHTML = `<div class="empty-msg">${fetchErr.message}</div>`;
         return;
       }
+      currentLeagueConstants = await getLeagueConstants(pitchingSelectedSeason);
       document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
       if (rows.length === 0) {
         content.innerHTML = `<div class="empty-msg">No pitches match these filters.</div>`;
