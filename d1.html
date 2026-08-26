@@ -24,9 +24,10 @@
   }
   .logo-chip {
     width: 42px; height: 42px; border-radius: 8px; background: white;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 800; color: var(--maroon); font-size: 15px; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+    overflow: hidden;
   }
+  .logo-chip img { width: 100%; height: 100%; object-fit: contain; }
   .header-bar h1 {
     font-size: 16px; letter-spacing: 0.08em; margin: 0; font-weight: 700;
   }
@@ -138,7 +139,7 @@
 </head>
 <body>
   <div class="header-bar">
-    <div class="logo-chip">BC</div>
+    <div class="logo-chip"><img src="bc_logo.png" alt="Boston College Eagles logo"></div>
     <h1 id="headerTitle">BOSTON COLLEGE BASEBALL</h1>
   </div>
 
