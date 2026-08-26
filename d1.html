@@ -1049,15 +1049,13 @@
   let hittingActiveInnerTab = 'traditional';
 
   async function populateHittingFilters(){
-    const seasonResp = await fetch(`${apiBase()}/rest/v1/pitches?select=season_year&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
-    const seasonRows = await seasonResp.json();
+    const seasonRows = await fetchAllRows(`${apiBase()}/rest/v1/pitches?select=season_year&batter_team_id=eq.${encodeURIComponent(currentTeamId)}`, headers());
     const seasons = [...new Set(seasonRows.map(r => r.season_year).filter(s => s != null))].sort((a,b) => b-a);
     if (hittingSelectedSeason === null && seasons.length) hittingSelectedSeason = seasons[0];
     const seasonSelect = document.getElementById('seasonSelect');
     seasonSelect.innerHTML = seasons.map(s => `<option value="${s}" ${String(s)===String(hittingSelectedSeason)?'selected':''}>${s}</option>`).join('');
 
-    const hitterResp = await fetch(`${apiBase()}/rest/v1/pitches?select=batter_id,batter&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
-    const hitterRows = await hitterResp.json();
+    const hitterRows = await fetchAllRows(`${apiBase()}/rest/v1/pitches?select=batter_id,batter&batter_team_id=eq.${encodeURIComponent(currentTeamId)}`, headers());
     const hitterMap = new Map();
     hitterRows.forEach(r => { if (r.batter_id) hitterMap.set(r.batter_id, r.batter); });
     document.getElementById('hitterCountLabel').textContent = `${hitterMap.size} hitter(s) in range`;
@@ -1066,8 +1064,7 @@
       [...hitterMap.entries()].sort((a,b)=>a[1].localeCompare(b[1]))
         .map(([id,name]) => `<option value="${id}" ${id===hittingSelectedHitterId?'selected':''}>${name}</option>`).join('');
 
-    const gameResp = await fetch(`${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitcher_team&batter_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
-    const gameRows = await gameResp.json();
+    const gameRows = await fetchAllRows(`${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,pitcher_team&batter_team_id=eq.${encodeURIComponent(currentTeamId)}`, headers());
     const gameMap = new Map();
     gameRows.forEach(r => { if (r.trackman_game_id) gameMap.set(r.trackman_game_id, `${r.date || '?'} vs ${r.pitcher_team || '?'}`); });
     const gameSelect = document.getElementById('gameSelect');
@@ -1092,14 +1089,18 @@
       await populateHittingFilters();
 
       const fields = 'batter_id,batter,pitch_call,plate_loc_side,plate_loc_height,exit_speed,angle,play_result,kor_bb,pitcher_throws,tagged_pitch_type,trackman_game_id,season_year,date,inning,top_bottom,pa_of_inning,sds,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored,attack_zone,balls,strikes,x_avg,x_slg,x_woba';
-      let url = `${apiBase()}/rest/v1/pitches?select=${fields}&batter_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
+      let url = `${apiBase()}/rest/v1/pitches?select=${fields}&batter_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}`;
       if (hittingSelectedSeason) url += `&season_year=eq.${encodeURIComponent(hittingSelectedSeason)}`;
       if (hittingSelectedHitterId !== 'all') url += `&batter_id=eq.${encodeURIComponent(hittingSelectedHitterId)}`;
       if (hittingSelectedGameId !== 'all') url += `&trackman_game_id=eq.${encodeURIComponent(hittingSelectedGameId)}`;
 
-      const resp = await fetch(url, { headers: headers() });
-      if (!resp.ok) { content.innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
-      const rows = await resp.json();
+      let rows;
+      try {
+        rows = await fetchAllRows(url, headers());
+      } catch (fetchErr) {
+        content.innerHTML = `<div class="empty-msg">${fetchErr.message}</div>`;
+        return;
+      }
       document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
       if (rows.length === 0) {
         content.innerHTML = `<div class="empty-msg">No pitches match these filters.</div>`;
@@ -1240,6 +1241,32 @@
 
   function apiBase(){ return urlInput.value.trim().replace(/\/$/, ''); }
   function headers(){ return { apikey: keyInput.value.trim() }; }
+
+  // Supabase's REST layer caps any single response at 1,000 rows by
+  // default, REGARDLESS of what &limit= is set to in the URL -- this was
+  // silently truncating every fetch in this app to 1,000 rows no matter
+  // how much data actually existed. Confirmed against Supabase's own
+  // docs. Paginates using PostgREST's Range header until a partial page
+  // comes back, so this is correct regardless of the project's Max Rows
+  // dashboard setting (which has also been reported not to reliably
+  // take effect even when changed).
+  async function fetchAllRows(url, hdrs){
+    const PAGE_SIZE = 1000;
+    let allRows = [];
+    let offset = 0;
+    while (true) {
+      const pageHeaders = { ...hdrs, 'Range-Unit': 'items', 'Range': `${offset}-${offset+PAGE_SIZE-1}` };
+      const resp = await fetch(url, { headers: pageHeaders });
+      if (!resp.ok && resp.status !== 206) {
+        throw new Error(`HTTP ${resp.status} while fetching page at offset ${offset}`);
+      }
+      const pageRows = await resp.json();
+      allRows = allRows.concat(pageRows);
+      if (pageRows.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+    return allRows;
+  }
   function toggleSettings(){ document.getElementById('settingsBox').classList.toggle('open'); }
 
   // ---- On load: find BC and select it as the default team ----
@@ -1371,15 +1398,13 @@
   let pitchingActiveInnerTab = 'results';
 
   async function populatePitchingFilters(){
-    const seasonResp = await fetch(`${apiBase()}/rest/v1/pitches?select=season_year&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
-    const seasonRows = await seasonResp.json();
+    const seasonRows = await fetchAllRows(`${apiBase()}/rest/v1/pitches?select=season_year&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}`, headers());
     const seasons = [...new Set(seasonRows.map(r => r.season_year).filter(s => s != null))].sort((a,b) => b-a);
     if (pitchingSelectedSeason === null && seasons.length) pitchingSelectedSeason = seasons[0];
     const seasonSelect = document.getElementById('pitchSeasonSelect');
     seasonSelect.innerHTML = seasons.map(s => `<option value="${s}" ${String(s)===String(pitchingSelectedSeason)?'selected':''}>${s}</option>`).join('');
 
-    const pitcherResp = await fetch(`${apiBase()}/rest/v1/pitches?select=pitcher_id,pitcher&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
-    const pitcherRows = await pitcherResp.json();
+    const pitcherRows = await fetchAllRows(`${apiBase()}/rest/v1/pitches?select=pitcher_id,pitcher&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}`, headers());
     const pitcherMap = new Map();
     pitcherRows.forEach(r => { if (r.pitcher_id) pitcherMap.set(r.pitcher_id, r.pitcher); });
     document.getElementById('pitcherCountLabel').textContent = `${pitcherMap.size} pitcher(s) in range`;
@@ -1388,8 +1413,7 @@
       [...pitcherMap.entries()].sort((a,b)=>a[1].localeCompare(b[1]))
         .map(([id,name]) => `<option value="${id}" ${id===pitchingSelectedPitcherId?'selected':''}>${name}</option>`).join('');
 
-    const gameResp = await fetch(`${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,batter_team&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}&limit=8000`, { headers: headers() });
-    const gameRows = await gameResp.json();
+    const gameRows = await fetchAllRows(`${apiBase()}/rest/v1/pitches?select=trackman_game_id,date,batter_team&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}`, headers());
     const gameMap = new Map();
     gameRows.forEach(r => { if (r.trackman_game_id) gameMap.set(r.trackman_game_id, `${r.date || '?'} vs ${r.batter_team || '?'}`); });
     const gameSelect = document.getElementById('pitchGameSelect');
@@ -1770,14 +1794,18 @@
       await populatePitchingFilters();
 
       const fields = 'pitcher_id,pitcher,pitch_call,plate_loc_side,plate_loc_height,kor_bb,play_result,outs_on_play,batter_side,pitcher_throws,tagged_pitch_type,trackman_game_id,season_year,date,inning,top_bottom,pa_of_inning,exit_speed,angle,direction,distance,bearing,contact_position_x,contact_position_y,contact_position_z,runs_scored,attack_zone,balls,strikes,rel_speed,spin_rate,spin_axis,rel_height,rel_side,extension,induced_vert_break,horz_break,vert_appr_angle,horz_appr_angle';
-      let url = `${apiBase()}/rest/v1/pitches?select=${fields}&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}&limit=8000`;
+      let url = `${apiBase()}/rest/v1/pitches?select=${fields}&pitcher_team_id=eq.${encodeURIComponent(currentTeamId)}${dateFilterQS()}`;
       if (pitchingSelectedSeason) url += `&season_year=eq.${encodeURIComponent(pitchingSelectedSeason)}`;
       if (pitchingSelectedPitcherId !== 'all') url += `&pitcher_id=eq.${encodeURIComponent(pitchingSelectedPitcherId)}`;
       if (pitchingSelectedGameId !== 'all') url += `&trackman_game_id=eq.${encodeURIComponent(pitchingSelectedGameId)}`;
 
-      const resp = await fetch(url, { headers: headers() });
-      if (!resp.ok) { content.innerHTML = `<div class="empty-msg">Error: HTTP ${resp.status}</div>`; return; }
-      const rows = await resp.json();
+      let rows;
+      try {
+        rows = await fetchAllRows(url, headers());
+      } catch (fetchErr) {
+        content.innerHTML = `<div class="empty-msg">${fetchErr.message}</div>`;
+        return;
+      }
       document.getElementById('currentTeamSub').textContent = `${rows.length} pitches ingested so far`;
       if (rows.length === 0) {
         content.innerHTML = `<div class="empty-msg">No pitches match these filters.</div>`;
